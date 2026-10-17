@@ -18,26 +18,36 @@ import org.velvetlite.entity.girl.AbstractGirlEntity;
 import org.velvetlite.entity.girl.GirlManager;
 import org.velvetlite.registry.VelvetMenus;
 
-/** The girl's menu: her armor (worn for real), her 9-slot bag and the player's inventory. */
+/**
+ * The girl's menu: her armor and the items in her hands (worn and held for real), her 9-slot bag and the
+ * player's inventory. The screen has tabs; slots only show and take clicks on the inventory tab.
+ */
 public class GirlMenu extends AbstractContainerMenu {
 
     public static final EquipmentSlot[] ARMOR = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
     private static final ResourceLocation[] ARMOR_ICONS = {
             InventoryMenu.EMPTY_ARMOR_SLOT_HELMET, InventoryMenu.EMPTY_ARMOR_SLOT_CHESTPLATE,
             InventoryMenu.EMPTY_ARMOR_SLOT_LEGGINGS, InventoryMenu.EMPTY_ARMOR_SLOT_BOOTS};
+    public static final EquipmentSlot[] HANDS = {EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND};
+    private static final ResourceLocation[] HAND_ICONS = {
+            ResourceLocation.withDefaultNamespace("item/empty_slot_sword"), InventoryMenu.EMPTY_ARMOR_SLOT_SHIELD};
 
     // slot index ranges
     private static final int ARMOR_START = 0;
-    private static final int BAG_START = ARMOR_START + ARMOR.length;
+    private static final int HANDS_START = ARMOR_START + ARMOR.length;
+    private static final int BAG_START = HANDS_START + HANDS.length;
     private static final int PLAYER_START = BAG_START + AbstractGirlEntity.BAG_SIZE;
     private static final int PLAYER_END = PLAYER_START + 36;
 
     // layout, shared with GirlScreen
     public static final int ARMOR_X = 8, ARMOR_Y = 18;
-    public static final int BAG_X = 8, BAG_Y = 118;
-    public static final int PLAYER_X = 8, PLAYER_Y = 150, HOTBAR_Y = 208;
+    public static final int HANDS_X = 80, HANDS_Y = 54;
+    public static final int BAG_X = 108, BAG_Y = 18, BAG_COLUMNS = 3;
+    public static final int PLAYER_X = 8, PLAYER_Y = 108, HOTBAR_Y = 166;
 
     @Nullable private final AbstractGirlEntity girl;
+    /** Client side: whether the screen shows the inventory tab, the only one with slots. */
+    private boolean slotsVisible = true;
 
     public GirlMenu(int id, Inventory playerInv, @Nullable AbstractGirlEntity girl) {
         super(VelvetMenus.GIRL.get(), id);
@@ -45,20 +55,29 @@ public class GirlMenu extends AbstractContainerMenu {
         Container bag = girl != null ? girl.getBag() : new SimpleContainer(AbstractGirlEntity.BAG_SIZE);
 
         for (int i = 0; i < ARMOR.length; i++) {
-            addSlot(new ArmorSlot(girl, ARMOR[i], i, ARMOR_X, ARMOR_Y + i * 18)
+            addSlot(new EquipmentSlotSlot(girl, ARMOR[i], ARMOR_X, ARMOR_Y + i * 18)
                     .setBackground(InventoryMenu.BLOCK_ATLAS, ARMOR_ICONS[i]));
         }
+        for (int i = 0; i < HANDS.length; i++) {
+            addSlot(new EquipmentSlotSlot(girl, HANDS[i], HANDS_X, HANDS_Y + i * 18)
+                    .setBackground(InventoryMenu.BLOCK_ATLAS, HAND_ICONS[i]));
+        }
         for (int i = 0; i < AbstractGirlEntity.BAG_SIZE; i++) {
-            addSlot(new Slot(bag, i, BAG_X + i * 18, BAG_Y));
+            addSlot(new TabSlot(bag, i, BAG_X + i % BAG_COLUMNS * 18, BAG_Y + i / BAG_COLUMNS * 18));
         }
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInv, col + row * 9 + 9, PLAYER_X + col * 18, PLAYER_Y + row * 18));
+                addSlot(new TabSlot(playerInv, col + row * 9 + 9, PLAYER_X + col * 18, PLAYER_Y + row * 18));
             }
         }
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInv, col, PLAYER_X + col * 18, HOTBAR_Y));
+            addSlot(new TabSlot(playerInv, col, PLAYER_X + col * 18, HOTBAR_Y));
         }
+    }
+
+    /** Client side, from the screen: hides the slots on the tabs without them. */
+    public void setSlotsVisible(boolean visible) {
+        this.slotsVisible = visible;
     }
 
     /** Client side: the server sends the girl's entity id when opening the menu. */
@@ -107,13 +126,24 @@ public class GirlMenu extends AbstractContainerMenu {
         return original;
     }
 
-    /** A slot that reads and writes the girl's equipment directly. */
-    private static class ArmorSlot extends Slot {
+    private class TabSlot extends Slot {
+        TabSlot(Container container, int index, int x, int y) {
+            super(container, index, x, y);
+        }
+
+        @Override
+        public boolean isActive() {
+            return slotsVisible;
+        }
+    }
+
+    /** A slot that reads and writes one of the girl's equipment slots (armor or hand) directly. */
+    private class EquipmentSlotSlot extends TabSlot {
         @Nullable private final AbstractGirlEntity girl;
         private final EquipmentSlot equipment;
 
-        ArmorSlot(@Nullable AbstractGirlEntity girl, EquipmentSlot equipment, int index, int x, int y) {
-            super(new SimpleContainer(ARMOR.length), index, x, y);
+        EquipmentSlotSlot(@Nullable AbstractGirlEntity girl, EquipmentSlot equipment, int x, int y) {
+            super(new SimpleContainer(1), 0, x, y);
             this.girl = girl;
             this.equipment = equipment;
         }
@@ -140,7 +170,9 @@ public class GirlMenu extends AbstractContainerMenu {
 
         @Override
         public boolean mayPlace(ItemStack stack) {
-            return girl != null && girl.getEquipmentSlotForItem(stack) == equipment;
+            // anything goes into her hands, armor only where it's worn
+            return girl != null && (equipment.getType() == EquipmentSlot.Type.HAND
+                    || girl.getEquipmentSlotForItem(stack) == equipment);
         }
 
         @Override
@@ -152,7 +184,7 @@ public class GirlMenu extends AbstractContainerMenu {
 
         @Override
         public int getMaxStackSize() {
-            return 1;
+            return equipment.getType() == EquipmentSlot.Type.HAND ? super.getMaxStackSize() : 1;
         }
     }
 }

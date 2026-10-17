@@ -8,6 +8,7 @@ import net.neoforged.neoforge.registries.DeferredHolder;
 import org.velvetlite.VelvetLite;
 import org.velvetlite.entity.girl.AbstractGirlEntity;
 import org.velvetlite.entity.girl.GirlAction;
+import org.velvetlite.entity.girl.GirlMode;
 import org.velvetlite.entity.girl.GirlType;
 import org.velvetlite.registry.VelvetSounds;
 import software.bernie.geckolib.animation.AnimationState;
@@ -41,15 +42,56 @@ public final class GirlAnimationController {
         GirlType type = girl.getGirlType();
         Optional<RawAnimation> anim;
         if (isWalking(girl)) {
-            anim = switch (girl.getMode()) {
+            Gait gait = Gait.choose(girl.clientGait, girl.getMode() == GirlMode.RUN, girl.clientGroundSpeed);
+            girl.clientGait = gait;
+            anim = switch (gait) {
                 case WALK      -> find(type, Mode.LOOP, "walk");
                 case FAST_WALK -> find(type, Mode.LOOP, "fastwalk", "walk");
                 case RUN       -> find(type, Mode.LOOP, "run", "running", "walk");
             };
         } else {
+            girl.clientGait = null;
             anim = find(type, Mode.LOOP, "idle");
         }
         return anim.map(state::setAndContinue).orElse(PlayState.STOP);
+    }
+
+    /**
+     * Walk cycles, with how far the legs carry her in one tick at normal playback (stride per loop divided by
+     * the loop length). Whether she runs is up to her AI (she runs to catch up, or along with a sprinting
+     * owner) or when she's clearly faster than walking (panic, fleeing); walking, she takes the brisk cycle
+     * once she's faster than halfway between the two walk cycles. Either way the cycle then plays as fast as
+     * she actually moves.
+     */
+    public enum Gait {
+        WALK(0.053), FAST_WALK(0.08), RUN(0.147);
+
+        /** Blocks per tick the animation shows at speed 1. */
+        final double pace;
+
+        Gait(double pace) {
+            this.pace = pace;
+        }
+
+        /** Keeps the current cycle until the speed is clearly past the switch point, so it doesn't flicker. */
+        private static final double HYSTERESIS = 0.015;
+        private static final double BRISK_FROM = (WALK.pace + FAST_WALK.pace) / 2;
+
+        /** Faster than any walk her AI asks for (panic, fleeing): she runs whatever her mode says. */
+        private static final double RUN_FROM = 0.17;
+
+        static Gait choose(Gait current, boolean running, double speed) {
+            if (running || speed > RUN_FROM + (current == RUN ? -HYSTERESIS : HYSTERESIS)) return RUN;
+            double threshold = BRISK_FROM + (current == FAST_WALK ? -HYSTERESIS : HYSTERESIS);
+            return speed > threshold ? FAST_WALK : WALK;
+        }
+    }
+
+    /** Playback speed of the walk cycle: the legs move as fast as she actually goes. */
+    static double gaitSpeed(AbstractGirlEntity girl) {
+        Gait gait = girl.clientGait;
+        if (gait == null) return 1.0;
+        return Math.clamp(girl.clientGroundSpeed / gait.pace, 0.4, 2.5);
     }
 
     /** Square of the horizontal distance per tick above which she counts as walking. */

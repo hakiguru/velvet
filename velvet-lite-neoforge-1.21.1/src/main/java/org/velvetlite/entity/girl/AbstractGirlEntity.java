@@ -7,6 +7,7 @@ import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
@@ -120,6 +121,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
      * the renderer. Lets the riding partner's camera sit exactly in the model's head.
      */
     @Nullable public Vec3 clientPartnerEyes;
+    /** Client only: the point between her and the partner's body in the current frame, for the side views. */
+    @Nullable public Vec3 clientSceneFocus;
+    /** Client only: smoothed horizontal speed in blocks per tick and the walk cycle chosen for it. */
+    public double clientGroundSpeed;
+    @Nullable public org.velvetlite.client.animation.GirlAnimationController.Gait clientGait;
     private final AnimatableInstanceCache animationCache = new SingletonAnimatableInstanceCache(this);
     private final GirlSceneController scene = new GirlSceneController(this);
 
@@ -147,8 +153,8 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         this.setPathfindingMalus(PathType.DANGER_POWDER_SNOW, 8.0F);
         this.setPathfindingMalus(PathType.WATER, 8.0F);
 
-        // armor put on through the menu is the player's property: always drop it
-        for (EquipmentSlot slot : GirlMenu.ARMOR) this.setDropChance(slot, 2.0F);
+        // everything the player gave her comes back when she dies
+        for (EquipmentSlot slot : EquipmentSlot.values()) this.setDropChance(slot, 2.0F);
     }
 
     // ---- Registration ----
@@ -206,6 +212,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         if (!this.level().isClientSide) {
             scene.tick();
             tickSkills();
+        } else {
+            double moved = Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
+            // positions arrive from the server in uneven steps: average over about half a second
+            clientGroundSpeed += (moved - clientGroundSpeed) * 0.15;
         }
     }
 
@@ -553,7 +563,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        controllers.add(new AnimationController<>(
+        controllers.add(new org.velvetlite.client.animation.GaitAnimationController(
                 this, "movement", 5, org.velvetlite.client.animation.GirlAnimationController::movementPredicate)
                 .setSoundKeyframeHandler(org.velvetlite.client.animation.GirlAnimationController::ignoreKeyframe));
         controllers.add(new AnimationController<>(

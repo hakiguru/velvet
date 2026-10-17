@@ -41,6 +41,7 @@ public final class GirlSceneController {
     /** Where the partner stands, in blocks in front of the girl; matches the "steve" bone (z = -20px). */
     private static final double PARTNER_DISTANCE = 1.25;
     private static final int SCENE_AFFECTION_XP = 40;
+    private static final int SCENE_LUST_XP = 60;
 
     private final AbstractGirlEntity girl;
     @Nullable private SceneType pending;
@@ -220,7 +221,10 @@ public final class GirlSceneController {
     private void nextStage(GirlAction action) {
         GirlAction next = action.next();
         if (next == null || next == GirlAction.NULL) {
-            if (action.hasPartner()) girl.addSkillXp(GirlSkill.AFFECTION, SCENE_AFFECTION_XP); // finished, not aborted
+            if (action.hasPartner()) { // finished, not aborted
+                girl.addSkillXp(GirlSkill.AFFECTION, SCENE_AFFECTION_XP);
+                girl.addSkillXp(GirlSkill.LUST, SCENE_LUST_XP);
+            }
             stop();
         } else {
             setStage(next);

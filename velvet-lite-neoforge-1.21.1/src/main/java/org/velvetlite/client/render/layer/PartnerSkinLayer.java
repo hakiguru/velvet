@@ -33,11 +33,16 @@ import java.util.Set;
  * The genitals inside that bone aren't part of a skin layout: their UVs point into the corner of
  * {@link #PARTNER_TEXTURE}, so they get their own pass with that texture.
  * <p>
- * It also reports where the partner's eyes are, so the riding partner's camera sits in that head.
+ * It also reports where the partner's eyes are, so the riding partner's camera sits in that head, and the
+ * point between both bodies the side views look at.
  */
 public class PartnerSkinLayer<T extends AbstractGirlEntity> extends GeoRenderLayer<T> {
 
     public static final String HEAD_BONE = "Head2";
+    private static final String PARTNER_TORSO_BONE = "Torso2";
+    private static final String GIRL_TORSO_BONE = "torso";
+    /** Bones whose world position is needed: the eyes, and the middle of the scene for the side views. */
+    private static final List<String> TRACKED_BONES = List.of(HEAD_BONE, PARTNER_TORSO_BONE, GIRL_TORSO_BONE);
     private static final ResourceLocation PARTNER_TEXTURE =
             ResourceLocation.fromNamespaceAndPath(VelvetLite.MODID, "textures/player/steve.png");
     /** Drawn with {@link #PARTNER_TEXTURE}, not with the skin (each with everything below it). */
@@ -57,7 +62,11 @@ public class PartnerSkinLayer<T extends AbstractGirlEntity> extends GeoRenderLay
                        MultiBufferSource bufferSource, VertexConsumer buffer, float partialTick,
                        int packedLight, int packedOverlay) {
         girl.clientPartnerEyes = null;
+        girl.clientSceneFocus = null;
         if (!girl.getCurrentAction().isAttached() || girl.getPartnerUUID() == null) return;
+        // her torso as the main pass just placed it (the passes below would move it to their own matrices)
+        GeoBone torso = model.getBone(GIRL_TORSO_BONE).orElse(null);
+        Vec3 girlTorso = torso != null && torso.isTrackingMatrices() ? toVec(torso.getWorldPosition()) : null;
         Player partner = girl.level().getPlayerByUUID(girl.getPartnerUUID());
         if (!(partner instanceof AbstractClientPlayer clientPlayer)) return;
         boolean ownEyes = partner == Minecraft.getInstance().player && SceneCamera.isLookingThroughPartnerEyes();
@@ -69,7 +78,7 @@ public class PartnerSkinLayer<T extends AbstractGirlEntity> extends GeoRenderLay
         if (ownEyes) visibility.hideCubes(model, HEAD_BONE);
         PlayerSkin.Model arms = clientPlayer.getSkin().model();
         (arms == PlayerSkin.Model.SLIM ? WIDE_ARMS : SLIM_ARMS).forEach(name -> visibility.hideCubes(model, name));
-        model.getBone(HEAD_BONE).ifPresent(b -> b.setTrackingMatrices(true));
+        for (String name : TRACKED_BONES) model.getBone(name).ifPresent(b -> b.setTrackingMatrices(true));
         reRender(model, poseStack, bufferSource, girl, clientPlayer.getSkin().texture(), partialTick, packedLight, packedOverlay);
         visibility.restore();
 
@@ -84,6 +93,14 @@ public class PartnerSkinLayer<T extends AbstractGirlEntity> extends GeoRenderLay
             Vector3d neck = head.getWorldPosition();
             girl.clientPartnerEyes = new Vec3(neck.x, neck.y + EYES_ABOVE_NECK, neck.z);
         }
+        GeoBone partnerTorso = model.getBone(PARTNER_TORSO_BONE).orElse(null);
+        if (girlTorso != null && partnerTorso != null) {
+            girl.clientSceneFocus = girlTorso.add(toVec(partnerTorso.getWorldPosition())).scale(0.5);
+        }
+    }
+
+    private static Vec3 toVec(Vector3d v) {
+        return new Vec3(v.x, v.y, v.z);
     }
 
     private void reRender(BakedGeoModel model, PoseStack poseStack, MultiBufferSource bufferSource, T girl,

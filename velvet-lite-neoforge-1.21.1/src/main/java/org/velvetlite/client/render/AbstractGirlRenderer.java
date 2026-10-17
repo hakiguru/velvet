@@ -15,6 +15,7 @@ import org.joml.Vector3d;
 import org.velvetlite.client.ClientConfig;
 import org.velvetlite.client.SceneCamera;
 import org.velvetlite.client.render.layer.GirlArmorLayer;
+import org.velvetlite.client.render.layer.GirlHeldItemLayer;
 import org.velvetlite.client.render.layer.PartnerSkinLayer;
 import org.velvetlite.client.render.util.SoftNormalVertexConsumer;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
@@ -32,6 +33,7 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
         super(ctx, model);
         this.shadowRadius = shadowRadius;
         addRenderLayer(new GirlArmorLayer<>(this));
+        addRenderLayer(new GirlHeldItemLayer<>(this));
         addRenderLayer(new PartnerSkinLayer<>(this));
     }
 
@@ -45,8 +47,9 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
     private final SoftNormalVertexConsumer softNormals = new SoftNormalVertexConsumer();
 
     /**
-     * Set while the girl is drawn inside a GUI. The inventory preview is lit from the front, so normals
-     * softened towards "up" would make her dark there.
+     * Set while the girl is drawn inside a GUI. The inventory preview has its own lights, so the normals are
+     * softened towards those instead of up (which would leave her face in the shade there), and she has no
+     * name tag.
      */
     public static boolean renderingInGui;
 
@@ -55,8 +58,9 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
                                MultiBufferSource bufferSource, VertexConsumer buffer, boolean isReRender,
                                float partialTick, int packedLight, int packedOverlay, int colour) {
         float softness = ClientConfig.SHADING_SOFTNESS.get().floatValue();
-        if (softness > 0 && buffer != null && !renderingInGui) {
-            buffer = softNormals.wrap(buffer, softness);
+        if (softness > 0 && buffer != null) {
+            buffer = softNormals.wrap(buffer, softness,
+                    renderingInGui ? SoftNormalVertexConsumer.INVENTORY_LIGHT : SoftNormalVertexConsumer.WORLD_UP);
         }
         super.actuallyRender(poseStack, animatable, model, renderType, bufferSource, buffer, isReRender,
                 partialTick, packedLight, packedOverlay, colour);
@@ -64,14 +68,15 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
 
     /**
      * Always named, also while the scene partner rides her (GeckoLib hides names of ridden entities); only
-     * not for her partner looking out of the model's head, where the name would hang right in his face.
+     * not for her partner looking out of the model's head, where the name would hang right in his face, and
+     * not in the menu's preview.
      */
     @Override
     public boolean shouldShowName(T girl) {
         Minecraft mc = Minecraft.getInstance();
         boolean partnerEyes = mc.player != null && mc.player.getUUID().equals(girl.getPartnerUUID())
                 && SceneCamera.isLookingThroughPartnerEyes();
-        return Minecraft.renderNames() && !partnerEyes && girl != mc.getCameraEntity() && !girl.isInvisibleTo(mc.player)
+        return Minecraft.renderNames() && !renderingInGui && !partnerEyes && girl != mc.getCameraEntity() && !girl.isInvisibleTo(mc.player)
                 && this.entityRenderDispatcher.distanceToSqr(girl) < NAME_DISTANCE * NAME_DISTANCE;
     }
 

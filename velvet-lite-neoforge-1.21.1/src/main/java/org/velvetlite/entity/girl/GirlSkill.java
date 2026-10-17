@@ -1,25 +1,39 @@
 package org.velvetlite.entity.girl;
 
 /**
- * Skills a girl levels up by doing things with the player. Experience is synced to clients for the menu.
+ * Skills a girl levels up by doing things with the player. Experience is synced to clients for the menu and
+ * saved by name, so the order here is only the order in the menu.
  * <ul>
- *   <li>AFFECTION: finished scenes and time spent near her owner; groundwork for relationships.</li>
  *   <li>ENDURANCE: damage she survives; +2 max health per level.</li>
+ *   <li>AFFECTION: finished scenes and time spent near her owner; groundwork for relationships.</li>
+ *   <li>LUST: finished scenes.</li>
  *   <li>AGILITY: distance walked; +3% movement speed per level.</li>
+ *   <li>The rest have no way to grow yet: they come with the activities they're about (fighting, building,
+ *       crafting...).</li>
  * </ul>
  */
 public enum GirlSkill {
-    AFFECTION(0xFFE0609A),
-    ENDURANCE(0xFFD04848),
-    AGILITY(0xFF48A8E0);
+    ENDURANCE(0xFFD04848, true),
+    AFFECTION(0xFFE0609A, true),
+    LUST(0xFFB04CD8, true),
+    CAPACITY(0xFFC8963C, false),
+    KINDNESS(0xFF5CC878, false),
+    AGGRESSION(0xFF8C2A2A, false),
+    BUILDING(0xFF9C7A54, false),
+    WEAPONS(0xFF9AA4B4, false),
+    TOOLS(0xFF4C8CA8, false),
+    AGILITY(0xFF48A8E0, true);
 
     public static final int MAX_LEVEL = 10;
 
     /** Bar colour in the menu. */
     public final int color;
+    /** Whether anything gives experience for it yet; the menu says so for those that don't. */
+    public final boolean grows;
 
-    GirlSkill(int color) {
+    GirlSkill(int color, boolean grows) {
         this.color = color;
+        this.grows = grows;
     }
 
     /** Total experience needed to reach {@code level} (level 1 needs none, 2 needs 50, 10 needs 2250). */
@@ -35,5 +49,9 @@ public enum GirlSkill {
 
     public String translationKey() {
         return "skill.velvet_lite." + name().toLowerCase();
+    }
+
+    public String descriptionKey() {
+        return translationKey() + ".desc";
     }
 }

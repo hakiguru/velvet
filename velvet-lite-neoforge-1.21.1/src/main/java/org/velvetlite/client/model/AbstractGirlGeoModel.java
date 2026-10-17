@@ -1,9 +1,13 @@
 package org.velvetlite.client.model;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
+import org.joml.Matrix3f;
+import org.joml.Vector3f;
 import org.velvetlite.VelvetLite;
+import org.velvetlite.client.SceneCamera;
 import org.velvetlite.entity.girl.AbstractGirlEntity;
 import org.velvetlite.entity.girl.GirlType;
 import software.bernie.geckolib.animation.AnimationState;
@@ -11,9 +15,9 @@ import software.bernie.geckolib.cache.GeckoLibCache;
 import software.bernie.geckolib.cache.object.GeoBone;
 import software.bernie.geckolib.model.GeoModel;
 
-import java.util.HashMap;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
-import java.util.Map;
 
 public abstract class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends GeoModel<T> {
 
@@ -26,9 +30,6 @@ public abstract class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends
      */
     public static final String PARTNER_BONE = "steve";
     public static final String PARTNER_HEAD_BONE = "Head2";
-    /** How far the partner's head turns to follow where the player looks. */
-    private static final float HEAD_MAX_YAW = 70;
-    private static final float HEAD_MAX_PITCH = 50;
     private static final List<String> HIDDEN_BONES = List.of(
             PARTNER_BONE,
             "armorHelmet", "armorBoobs", "armorChest", "armorShoulderL", "armorShoulderR", "armorHip",
@@ -45,11 +46,6 @@ public abstract class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends
     // index = model variant (0 nude, 1 dressed, 2 armored); resolved lazily because
     // GeckoLib bakes models after the renderer is created
     private final ResourceLocation[] models = new ResourceLocation[3];
-    /**
-     * Girl id -> {rotX, rotY the head was left with, the look offsets included in them}. GeckoLib leaves a
-     * bone as it is on frames it doesn't animate it, so the previous offset has to come off first.
-     */
-    private final Map<Integer, float[]> partnerHeadLook = new HashMap<>();
 
     protected AbstractGirlGeoModel(GirlType type) {
         this.type = type;
@@ -119,32 +115,36 @@ public abstract class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends
         }
     }
 
-    /** Turns the "steve" head where the scene partner looks, within what a neck allows. */
+    /**
+     * Turns the "steve" head exactly where the scene partner looks, with no neck limits. The look is a world
+     * direction while the bone rotates in its parent's space, and the parents (the whole model, "steve",
+     * "Torso2") may be turned, bent or lying: so the head's rotation is the look with all of theirs taken
+     * off. Rotating by the raw look angles instead twists the head as soon as the body isn't upright.
+     */
     private void lookWithPartner(T girl, float partialTick) {
         GeoBone head = getBone(PARTNER_HEAD_BONE).orElse(null);
-        GeoBone body = getBone(PARTNER_BONE).orElse(null);
-        if (head == null || body == null) return;
-        float[] last = partnerHeadLook.remove(girl.getId());
-        float baseX = head.getRotX();
-        float baseY = head.getRotY();
-        if (last != null && baseX == last[0]) baseX -= last[2];
-        if (last != null && baseY == last[1]) baseY -= last[3];
-
+        if (head == null) return;
         Player partner = girl.getCurrentAction().isAttached() && girl.getPartnerUUID() != null
                 ? girl.level().getPlayerByUUID(girl.getPartnerUUID()) : null;
-        float offsetX = 0;
-        float offsetY = 0;
-        if (partner != null) {
-            // the bone stands half turned in the model file (facing the girl); animations turn it further
-            float bodyYaw = Mth.rotLerp(partialTick, girl.yBodyRotO, girl.yBodyRot) - body.getRotY() * Mth.RAD_TO_DEG;
-            float yaw = Mth.clamp(Mth.wrapDegrees(partner.getViewYRot(partialTick) - bodyYaw), -HEAD_MAX_YAW, HEAD_MAX_YAW);
-            float pitch = Mth.clamp(partner.getViewXRot(partialTick), -HEAD_MAX_PITCH, HEAD_MAX_PITCH);
-            offsetX = -pitch * Mth.DEG_TO_RAD;
-            offsetY = -yaw * Mth.DEG_TO_RAD;
-        }
-        head.setRotX(baseX + offsetX);
-        head.setRotY(baseY + offsetY);
-        if (partner != null) partnerHeadLook.put(girl.getId(), new float[]{baseX + offsetX, baseY + offsetY, offsetX, offsetY});
+        if (partner == null) return;
+        // the side views orbit the camera with the mouse: the head then keeps its animated pose
+        if (partner == Minecraft.getInstance().player && !SceneCamera.headFollowsLook()) return;
+
+        // same order as the renderer: the model turned by the body yaw, then each bone by Z, Y, X
+        float bodyYaw = Mth.rotLerp(partialTick, girl.yBodyRotO, girl.yBodyRot);
+        Matrix3f parent = new Matrix3f().rotationY((180.0F - bodyYaw) * Mth.DEG_TO_RAD);
+        Deque<GeoBone> ancestors = new ArrayDeque<>();
+        for (GeoBone bone = head.getParent(); bone != null; bone = bone.getParent()) ancestors.push(bone);
+        for (GeoBone bone : ancestors) parent.rotateZ(bone.getRotZ()).rotateY(bone.getRotY()).rotateX(bone.getRotX());
+
+        // the head's face points to -Z: turn it to the view yaw, then tilt it by the pitch
+        Matrix3f look = new Matrix3f()
+                .rotationY((180.0F - partner.getViewYRot(partialTick)) * Mth.DEG_TO_RAD)
+                .rotateX(-partner.getViewXRot(partialTick) * Mth.DEG_TO_RAD);
+        Vector3f angles = parent.invert().mul(look).getEulerAnglesZYX(new Vector3f());
+        head.setRotX(angles.x);
+        head.setRotY(angles.y);
+        head.setRotZ(angles.z);
     }
 
     private static ResourceLocation loc(String path) {
