@@ -17,7 +17,7 @@ public final class VelvetCreativeTabs {
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> MAIN =
             TABS.register("main", () -> CreativeModeTab.builder()
                     .title(Component.translatable("itemGroup.velvet_lite"))
-                    .icon(() -> new ItemStack(VelvetItems.ELSIE_SPAWN_EGG.get()))
+                    .icon(() -> new ItemStack(VelvetItems.NPC_EDITOR_WAND.get()))
                     .displayItems((params, output) -> {
                         output.accept(VelvetItems.NPC_EDITOR_WAND.get());
                         output.accept(VelvetItems.ELSIE_SPAWN_EGG.get());

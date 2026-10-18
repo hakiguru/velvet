@@ -42,6 +42,13 @@ public final class GirlSceneController {
     private static final double PARTNER_DISTANCE = 1.25;
     private static final int SCENE_AFFECTION_XP = 40;
     private static final int SCENE_LUST_XP = 60;
+    private static final int SCENE_CAPACITY_XP = 30;
+    private static final int SCENE_ENDURANCE_XP = 20;
+    /** How long the slow loop alone takes to fill the bar at endurance 0; each level adds a tenth of it. */
+    private static final float SLOW_SCENE_TICKS = 60 * 20;
+    private static final float SCENE_TICKS_PER_ENDURANCE = 0.1F;
+    /** The fast loop fills the bar this many times quicker than the slow one. */
+    private static final float FAST_FILL_RATE = 4;
 
     private final AbstractGirlEntity girl;
     @Nullable private SceneType pending;
@@ -188,12 +195,18 @@ public final class GirlSceneController {
         }
         boolean cycleEnded = Mth.floor(stageTicks / action.cycle) != Mth.floor((stageTicks - 1) / action.cycle);
         if (!cycleEnded) return;
-        setProgress(Math.min(1, progress + action.fill));
+        setProgress(Math.min(1, progress + fillPerCycle(action)));
         if (progress >= 1) {
             setStage(action.finish());
         } else if (action.pace == GirlAction.Pace.FAST && !fast) {
             setStage(action.next());
         }
+    }
+
+    /** How much one cycle of a paced loop fills the bar: the whole scene lasts longer the more endurance she has. */
+    private float fillPerCycle(GirlAction action) {
+        float sceneTicks = SLOW_SCENE_TICKS * (1 + SCENE_TICKS_PER_ENDURANCE * girl.getSkillLevel(GirlSkill.ENDURANCE));
+        return action.cycle / sceneTicks * (action.pace == GirlAction.Pace.FAST ? FAST_FILL_RATE : 1);
     }
 
     // ---- Stages ----
@@ -224,6 +237,8 @@ public final class GirlSceneController {
             if (action.hasPartner()) { // finished, not aborted
                 girl.addSkillXp(GirlSkill.AFFECTION, SCENE_AFFECTION_XP);
                 girl.addSkillXp(GirlSkill.LUST, SCENE_LUST_XP);
+                girl.addSkillXp(GirlSkill.CAPACITY, SCENE_CAPACITY_XP);
+                girl.addSkillXp(GirlSkill.ENDURANCE, SCENE_ENDURANCE_XP);
             }
             stop();
         } else {

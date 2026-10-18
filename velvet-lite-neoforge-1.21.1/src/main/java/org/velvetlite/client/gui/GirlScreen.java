@@ -13,14 +13,16 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import org.jetbrains.annotations.Nullable;
 import org.velvetlite.client.render.AbstractGirlRenderer;
 import org.velvetlite.entity.girl.AbstractGirlEntity;
+import org.velvetlite.entity.girl.GirlNeeds;
 import org.velvetlite.entity.girl.GirlSkill;
 import org.velvetlite.entity.girl.scene.SceneType;
 import org.velvetlite.menu.GirlMenu;
 import org.velvetlite.network.NetworkHandler;
 import org.velvetlite.network.packet.SendGirlHomePacket;
-import org.velvetlite.network.packet.SetGirlOwnerPacket;
+import org.velvetlite.network.packet.SetFollowingPacket;
 import org.velvetlite.network.packet.SetHomePositionPacket;
 import org.velvetlite.network.packet.SetOutfitPacket;
 import org.velvetlite.network.packet.StartScenePacket;
@@ -30,13 +32,16 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.velvetlite.client.gui.PanelArt.*;
+
 /**
  * The girl's menu, split into tabs along the top edge:
  * <ul>
- *   <li>Inventory: her model with armor and hand slots, her bag, health, and the player's inventory.</li>
- *   <li>Levels: every skill with its level and progress.</li>
+ *   <li>Inventory: her model with armor and hand slots, her inventory, health, food and armor, and the
+ *       player's inventory.</li>
+ *   <li>Levels: every skill with its level and progress towards the next.</li>
  *   <li>Commands: follow, home, outfit. Toggle buttons always show the action that applies right now.</li>
- *   <li>Scenes: the paid services.</li>
+ *   <li>Actions: the paid scenes.</li>
  * </ul>
  */
 public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
@@ -45,11 +50,12 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         INVENTORY(new ItemStack(Items.CHEST)),
         LEVELS(new ItemStack(Items.EXPERIENCE_BOTTLE)),
         COMMANDS(new ItemStack(Items.BELL)),
-        SCENES(new ItemStack(Items.PINK_TULIP));
+        /** Drawn with the HUD heart instead of an item. */
+        ACTIONS(null);
 
-        final ItemStack icon;
+        @Nullable final ItemStack icon;
 
-        Tab(ItemStack icon) {
+        Tab(@Nullable ItemStack icon) {
             this.icon = icon;
         }
 
@@ -62,23 +68,16 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
     private static Tab lastTab = Tab.INVENTORY;
 
     private static final int MODEL_X = 26, MODEL_Y = 18, MODEL_W = 50, MODEL_H = 72;
-    private static final int TAB_W = 28, TAB_H = 24, TAB_GAP = 1;
-    /** How far the tabs stick out above the panel. */
-    private static final int TAB_RISE = 21;
-    private static final int CONTENT_X = 8, CONTENT_Y = 18, CONTENT_W = 160;
+    private static final int CONTENT_X = 8, CONTENT_Y = 18;
+    private static final int CONTENT_W = GirlMenu.WIDTH - 2 * CONTENT_X;
     private static final int BUTTON_H = 20, BUTTON_STEP = 22;
     private static final int SKILL_STEP = 16;
-
-    // vanilla container colours
-    private static final int PANEL = 0xFFC6C6C6;
-    private static final int LIGHT = 0xFFFFFFFF;
-    private static final int SHADOW = 0xFF555555;
-    private static final int DARK = 0xFF373737;
-    private static final int SLOT = 0xFF8B8B8B;
-    private static final int OUTLINE = 0xFF000000;
-    private static final int LABEL = 0xFF404040;
+    private static final int STATS_Y = GirlMenu.BAG_Y + 3 * 18 + 4;
     /** Behind the model: dark enough to frame her, light enough not to swallow dark clothes. */
     private static final int MODEL_BACKGROUND = 0xFF6B6B6B;
+    /** A closed slot of her inventory: dark and flat, with a cross. */
+    private static final int CLOSED_SLOT = 0xFF5E5E5E;
+    private static final int CLOSED_CROSS = 0xFF4E4E4E;
 
     private Tab tab = lastTab;
     /** Widgets of each tab, shown only while it's open. */
@@ -91,8 +90,9 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
 
     public GirlScreen(GirlMenu menu, Inventory playerInv, Component title) {
         super(menu, playerInv, title);
-        this.imageWidth = 176;
-        this.imageHeight = 190;
+        this.imageWidth = GirlMenu.WIDTH;
+        this.imageHeight = 196;
+        this.inventoryLabelX = GirlMenu.PLAYER_X;
         this.inventoryLabelY = GirlMenu.PLAYER_Y - 11;
     }
 
@@ -120,7 +120,7 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
                 .bounds(x, y + 3 * BUTTON_STEP, CONTENT_W, BUTTON_H).build());
 
         for (SceneType type : SceneType.values()) {
-            sceneButtons.put(type, add(Tab.SCENES, new ServiceButton(x, y + type.ordinal() * BUTTON_STEP,
+            sceneButtons.put(type, add(Tab.ACTIONS, new ServiceButton(x, y + type.ordinal() * BUTTON_STEP,
                     CONTENT_W, BUTTON_H, type, b -> startScene(girl, type))));
         }
         selectTab(tab);
@@ -152,9 +152,7 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
 
     /** Updates toggle labels and availability from the girl's synced state. */
     private void refresh(AbstractGirlEntity girl) {
-        boolean following = minecraft != null && minecraft.player != null
-                && minecraft.player.getUUID().equals(girl.getOwnerUUID());
-        followButton.setMessage(Component.translatable(following ? "gui.velvet_lite.stop_following" : "gui.velvet_lite.follow_me"));
+        followButton.setMessage(Component.translatable(girl.isFollowing() ? "gui.velvet_lite.stop_following" : "gui.velvet_lite.follow_me"));
         boolean dressed = girl.getModelVariant() != AbstractGirlEntity.VARIANT_NUDE;
         outfitButton.setMessage(Component.translatable(dressed ? "gui.velvet_lite.undress" : "gui.velvet_lite.dress_up"));
 
@@ -167,10 +165,7 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
     }
 
     private void toggleFollow(AbstractGirlEntity girl) {
-        if (minecraft == null || minecraft.player == null) return;
-        boolean following = minecraft.player.getUUID().equals(girl.getOwnerUUID());
-        NetworkHandler.sendToServer(new SetGirlOwnerPacket(girl.getGirlUUID(),
-                following ? SetGirlOwnerPacket.NO_OWNER : minecraft.player.getUUID()));
+        NetworkHandler.sendToServer(new SetFollowingPacket(girl.getGirlUUID(), !girl.isFollowing()));
     }
 
     private void toggleOutfit(AbstractGirlEntity girl) {
@@ -187,20 +182,10 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
 
     // ---- Tabs ----
 
-    private int tabX(Tab t) {
-        return leftPos + t.ordinal() * (TAB_W + TAB_GAP);
-    }
-
-    private int tabY() {
-        return topPos - TAB_RISE;
-    }
-
+    @Nullable
     private Tab tabAt(double mouseX, double mouseY) {
-        if (mouseY < tabY() || mouseY >= topPos) return null;
-        for (Tab t : Tab.values()) {
-            if (mouseX >= tabX(t) && mouseX < tabX(t) + TAB_W) return t;
-        }
-        return null;
+        int i = PanelArt.tabAt(mouseX, mouseY, leftPos, topPos, Tab.values().length);
+        return i < 0 ? null : Tab.values()[i];
     }
 
     @Override
@@ -224,19 +209,18 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         return tabAt(mouseX, mouseY) == null && super.hasClickedOutside(mouseX, mouseY, left, top, button);
     }
 
-    /** A tab: the open one joins the panel, the others sit behind it a little darker. */
     private void drawTab(GuiGraphics g, Tab t) {
-        boolean open = t == tab;
-        int x = tabX(t), y = tabY() + (open ? 0 : 3);
-        int bottom = topPos + (open ? 3 : 0);
-        int fill = open ? PANEL : 0xFFA8A8A8;
-        g.fill(x + 1, y, x + TAB_W - 1, bottom, OUTLINE);
-        g.fill(x, y + 1, x + TAB_W, bottom, OUTLINE);
-        g.fill(x + 1, y + 1, x + TAB_W - 1, bottom, fill);
-        g.fill(x + 1, y + 1, x + TAB_W - 2, y + 3, LIGHT);
-        g.fill(x + 1, y + 1, x + 3, bottom, open ? LIGHT : fill);
-        g.fill(x + TAB_W - 3, y + 2, x + TAB_W - 1, bottom, open ? SHADOW : fill);
-        g.renderItem(t.icon, x + (TAB_W - 16) / 2, y + (TAB_H - 16) / 2 - (open ? 0 : 1));
+        int[] icon = PanelArt.drawTab(g, tabX(leftPos, t.ordinal()), topPos, t == tab);
+        if (t.icon != null) {
+            g.renderItem(t.icon, icon[0], icon[1]);
+        } else {
+            // the HUD heart is 9 pixels: twice as big it's about the size of an item
+            g.pose().pushPose();
+            g.pose().translate(icon[0] - 1, icon[1] - 1, 0);
+            g.pose().scale(2, 2, 1);
+            StatusIcons.heart(g, 0, 0);
+            g.pose().popPose();
+        }
     }
 
     // ---- Rendering ----
@@ -250,6 +234,7 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         } else {
             renderTooltip(g, mouseX, mouseY);
             if (tab == Tab.LEVELS) renderSkillTooltip(g, mouseX, mouseY);
+            if (tab == Tab.INVENTORY) renderClosedSlotTooltip(g, mouseX, mouseY);
         }
     }
 
@@ -259,12 +244,12 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         for (Tab t : Tab.values()) if (t != tab) drawTab(g, t);
         drawPanel(g, leftPos, topPos, imageWidth, imageHeight);
         drawTab(g, tab);
-        // over the open tab's bottom outline, so it joins the panel
-        g.fill(tabX(tab) + 3, topPos, tabX(tab) + TAB_W - 3, topPos + 3, PANEL);
+        joinOpenTab(g, tabX(leftPos, tab.ordinal()), topPos);
         if (tab != Tab.INVENTORY) return;
 
         for (Slot slot : menu.slots) {
-            drawSlot(g, leftPos + slot.x - 1, topPos + slot.y - 1);
+            if (slot.isActive()) drawSlot(g, leftPos + slot.x - 1, topPos + slot.y - 1);
+            else if (slot instanceof GirlMenu.BagSlot) drawClosedSlot(g, leftPos + slot.x, topPos + slot.y);
         }
         int mx = leftPos + MODEL_X, my = topPos + MODEL_Y;
         drawInset(g, mx, my, MODEL_W, MODEL_H, MODEL_BACKGROUND);
@@ -277,14 +262,40 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
             } finally {
                 AbstractGirlRenderer.renderingInGui = false;
             }
+            drawStats(g, girl, leftPos + GirlMenu.BAG_X, topPos + STATS_Y);
         }
+    }
+
+    private static void drawClosedSlot(GuiGraphics g, int x, int y) {
+        g.fill(x, y, x + 16, y + 16, CLOSED_SLOT);
+        for (int i = 3; i < 13; i++) {
+            g.fill(x + i, y + i, x + i + 1, y + i + 1, CLOSED_CROSS);
+            g.fill(x + 15 - i, y + i, x + 16 - i, y + i + 1, CLOSED_CROSS);
+        }
+    }
+
+    /** Health, food and armor in one row under her inventory, with the player's HUD icons. */
+    private void drawStats(GuiGraphics g, AbstractGirlEntity girl, int x, int y) {
+        String health = Math.round(girl.getHealth()) + "/" + Math.round(girl.getMaxHealth());
+        String food = girl.getFood() + "/" + GirlNeeds.MAX_FOOD;
+        String armor = String.valueOf(girl.getArmorValue());
+        StatusIcons.heart(g, x, y);
+        x += StatusIcons.ICON + 2;
+        g.drawString(font, health, x, y + 1, LABEL, false);
+        x += font.width(health) + 7;
+        StatusIcons.food(g, x, y);
+        x += StatusIcons.ICON + 2;
+        g.drawString(font, food, x, y + 1, girl.getFood() <= 6 ? 0xFFAA2222 : LABEL, false);
+        x += font.width(food) + 7;
+        StatusIcons.armor(g, x, y);
+        g.drawString(font, armor, x + StatusIcons.ICON + 2, y + 1, LABEL, false);
     }
 
     @Override
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, 8, 6, LABEL, false);
         AbstractGirlEntity girl = menu.getGirl();
-        // the inventory tab already says "Inventory" above the player's slots
+        // the inventory tab has its own labels
         Component right = girl != null && girl.getCurrentAction().isBusy()
                 ? Component.translatable("gui.velvet_lite.busy") : tab == Tab.INVENTORY ? Component.empty() : tab.title();
         g.drawString(font, right, imageWidth - 8 - font.width(right), 6, LABEL, false);
@@ -292,12 +303,10 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
 
         switch (tab) {
             case INVENTORY -> {
-                g.drawString(font, playerInventoryTitle, inventoryLabelX, inventoryLabelY, LABEL, false);
-                int y = GirlMenu.BAG_Y + 3 * 18 + 4;
-                Component health = Component.literal("❤ " + Math.round(girl.getHealth()) + " / " + Math.round(girl.getMaxHealth()));
-                g.drawString(font, health, GirlMenu.BAG_X, y, 0xFFAA2222, false);
-                Component armor = Component.literal("⛨ " + girl.getArmorValue());
-                g.drawString(font, armor, GirlMenu.BAG_X, y + 10, LABEL, false);
+                g.drawString(font, Component.translatable("gui.velvet_lite.girl_inventory"),
+                        GirlMenu.BAG_X, GirlMenu.BAG_Y - 11, LABEL, false);
+                g.drawString(font, Component.translatable("gui.velvet_lite.your_inventory"),
+                        inventoryLabelX, inventoryLabelY, LABEL, false);
             }
             case LEVELS -> {
                 int y = CONTENT_Y;
@@ -307,12 +316,12 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
                 }
             }
             case COMMANDS -> g.drawString(font, Component.translatable("gui.velvet_lite.more_commands_soon"),
-                    CONTENT_X, CONTENT_Y + 4 * BUTTON_STEP + 4, 0xFF707070, false);
-            case SCENES -> {}
+                    CONTENT_X, CONTENT_Y + 4 * BUTTON_STEP + 4, MUTED, false);
+            case ACTIONS -> {}
         }
     }
 
-    /** Skill name and level, and a bar with the progress towards the next level. */
+    /** Skill name and level, and a bar with the progress towards the next level; it starts over with each level. */
     private void renderSkill(GuiGraphics g, AbstractGirlEntity girl, GirlSkill skill, int x, int y) {
         int level = girl.getSkillLevel(skill);
         int textColor = skill.grows ? LABEL : 0xFF7A7A7A;
@@ -320,29 +329,54 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         Component lvl = Component.translatable("gui.velvet_lite.level", level);
         g.drawString(font, lvl, x + CONTENT_W - font.width(lvl), y, textColor, false);
 
-        float progress = 1F;
-        if (level < GirlSkill.MAX_LEVEL) {
-            int from = GirlSkill.xpForLevel(level), to = GirlSkill.xpForLevel(level + 1);
-            progress = (girl.getSkillXp(skill) - from) / (float) (to - from);
-        }
         int barY = y + 10;
         drawInset(g, x, barY, CONTENT_W, 3, 0xFF555555);
-        g.fill(x, barY, x + Math.round(CONTENT_W * progress), barY + 3, skill.color);
+        g.fill(x, barY, x + Math.round(CONTENT_W * progress(girl, skill)), barY + 3, skill.color);
     }
 
-    /** What a skill does and how it grows, for the row under the mouse. */
+    /** 0..1 towards the next level; full at the last one. */
+    private static float progress(AbstractGirlEntity girl, GirlSkill skill) {
+        int level = girl.getSkillLevel(skill);
+        if (level >= GirlSkill.MAX_LEVEL) return 1;
+        int from = GirlSkill.xpForLevel(level), to = GirlSkill.xpForLevel(level + 1);
+        return (girl.getSkillXp(skill) - from) / (float) (to - from);
+    }
+
+    /** What a skill does and how far it is, for the row under the mouse. */
     private void renderSkillTooltip(GuiGraphics g, int mouseX, int mouseY) {
+        AbstractGirlEntity girl = menu.getGirl();
         int row = (mouseY - topPos - CONTENT_Y) / SKILL_STEP;
         int localX = mouseX - leftPos - CONTENT_X;
-        if (mouseY < topPos + CONTENT_Y || localX < 0 || localX >= CONTENT_W || row >= GirlSkill.values().length) return;
+        if (girl == null || mouseY < topPos + CONTENT_Y || localX < 0 || localX >= CONTENT_W || row >= GirlSkill.values().length) return;
         GirlSkill skill = GirlSkill.values()[row];
         List<Component> lines = new ArrayList<>();
         lines.add(Component.translatable(skill.translationKey()));
         lines.add(Component.translatable(skill.descriptionKey()).withStyle(ChatFormatting.GRAY));
+        int level = girl.getSkillLevel(skill);
+        if (level >= GirlSkill.MAX_LEVEL) {
+            lines.add(Component.translatable("gui.velvet_lite.max_level").withStyle(ChatFormatting.GOLD));
+        } else {
+            int from = GirlSkill.xpForLevel(level);
+            lines.add(Component.translatable("gui.velvet_lite.xp", girl.getSkillXp(skill) - from,
+                    GirlSkill.xpForLevel(level + 1) - from).withStyle(ChatFormatting.DARK_AQUA));
+        }
         if (!skill.grows) {
             lines.add(Component.translatable("gui.velvet_lite.skill_not_growing").withStyle(ChatFormatting.DARK_GRAY));
         }
         g.renderComponentTooltip(font, lines, mouseX, mouseY);
+    }
+
+    /** A closed slot of her inventory: at which capacity level it opens. */
+    private void renderClosedSlotTooltip(GuiGraphics g, int mouseX, int mouseY) {
+        for (Slot slot : menu.slots) {
+            if (!(slot instanceof GirlMenu.BagSlot bag) || slot.isActive()) continue;
+            int x = leftPos + slot.x, y = topPos + slot.y;
+            if (mouseX < x || mouseX >= x + 16 || mouseY < y || mouseY >= y + 16) continue;
+            int level = Math.ceilDiv(bag.getContainerSlot() + 1 - AbstractGirlEntity.BAG_BASE_SLOTS, AbstractGirlEntity.BAG_SLOTS_PER_LEVEL);
+            g.renderTooltip(font, Component.translatable("gui.velvet_lite.slot_closed",
+                    Component.translatable(GirlSkill.CAPACITY.translationKey()), level), mouseX, mouseY);
+            return;
+        }
     }
 
     /** Service button: name on the left, price (item and count, or "free" in creative) on the right. */
@@ -377,28 +411,5 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
                 g.drawString(font, count, right - 17 - font.width(count), textY, color, true);
             }
         }
-    }
-
-    private static void drawPanel(GuiGraphics g, int x, int y, int w, int h) {
-        g.fill(x + 1, y, x + w - 1, y + h, OUTLINE);
-        g.fill(x, y + 1, x + w, y + h - 1, OUTLINE);
-        g.fill(x + 1, y + 1, x + w - 1, y + h - 1, PANEL);
-        g.fill(x + 1, y + 1, x + w - 2, y + 3, LIGHT);
-        g.fill(x + 1, y + 1, x + 3, y + h - 2, LIGHT);
-        g.fill(x + 2, y + h - 3, x + w - 1, y + h - 1, SHADOW);
-        g.fill(x + w - 3, y + 2, x + w - 1, y + h - 1, SHADOW);
-    }
-
-    private static void drawSlot(GuiGraphics g, int x, int y) {
-        drawInset(g, x + 1, y + 1, 16, 16, SLOT);
-    }
-
-    /** Sunken box: dark top-left edge, light bottom-right edge. */
-    private static void drawInset(GuiGraphics g, int x, int y, int w, int h, int fill) {
-        g.fill(x, y, x + w, y + h, fill);
-        g.fill(x - 1, y - 1, x + w, y, DARK);
-        g.fill(x - 1, y - 1, x, y + h, DARK);
-        g.fill(x, y + h, x + w + 1, y + h + 1, LIGHT);
-        g.fill(x + w, y, x + w + 1, y + h + 1, LIGHT);
     }
 }

@@ -27,6 +27,7 @@ public record SendGirlHomePacket(UUID girlId) implements CustomPacketPayload {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             GirlManager.allByUuid(pkt.girlId()).stream().filter(g -> GirlManager.canCommand(player, g)).forEach(g -> {
                 if (g.getHomePos() != null) {
+                    g.setFollowing(false); // she stays home once there
                     g.setShouldBeAtTarget(true);
                     g.setTargetVec(net.minecraft.world.phys.Vec3.atCenterOf(g.getHomePos()));
                 }

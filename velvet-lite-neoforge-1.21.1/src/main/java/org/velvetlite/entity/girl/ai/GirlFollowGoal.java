@@ -11,12 +11,12 @@ import org.velvetlite.entity.girl.GirlMode;
 
 import java.util.EnumSet;
 
-/** Follows the owner; repaths when stuck and, as a last resort, teleports to a safe spot next to him. */
+/**
+ * Follows the owner while told to; repaths when stuck and, as a last resort, teleports to a safe spot next
+ * to him. Runs to catch up unless she's out of breath. The distances come from her behavior settings.
+ */
 public class GirlFollowGoal extends Goal {
 
-    private static final double STOP_DISTANCE = 3.0;
-    private static final double RUN_DISTANCE = 8.0;
-    private static final double TELEPORT_DISTANCE = 24.0;
     /** Considered stuck after moving less than this many blocks in {@link #STUCK_CHECK_INTERVAL} ticks. */
     private static final double STUCK_MOVEMENT = 0.3;
     private static final int STUCK_CHECK_INTERVAL = 40;
@@ -39,17 +39,17 @@ public class GirlFollowGoal extends Goal {
 
     @Override
     public boolean canUse() {
-        if (girl.getOwnerUUID() == null || girl.shouldBeAtTarget()) return false;
+        if (!girl.isFollowing() || girl.getOwnerUUID() == null || girl.shouldBeAtTarget()) return false;
         this.owner = girl.level().getPlayerByUUID(girl.getOwnerUUID());
-        return owner != null && owner.isAlive() && !owner.isSpectator()
-                && girl.distanceToSqr(owner) > STOP_DISTANCE * STOP_DISTANCE;
+        double stop = girl.behavior().followStopDistance;
+        return owner != null && owner.isAlive() && !owner.isSpectator() && girl.distanceToSqr(owner) > stop * stop;
     }
 
     @Override
     public boolean canContinueToUse() {
+        double stop = girl.behavior().followStopDistance - 1;
         return owner != null && owner.isAlive() && !owner.isSpectator() && !girl.shouldBeAtTarget()
-                && girl.getOwnerUUID() != null
-                && girl.distanceToSqr(owner) > (STOP_DISTANCE - 1) * (STOP_DISTANCE - 1);
+                && girl.isFollowing() && girl.distanceToSqr(owner) > stop * stop;
     }
 
     @Override
@@ -72,9 +72,9 @@ public class GirlFollowGoal extends Goal {
         girl.getLookControl().setLookAt(owner, 10.0f, girl.getMaxHeadXRot());
         double dist = girl.distanceTo(owner);
 
-        if (dist > TELEPORT_DISTANCE && tryTeleportToOwner()) return;
+        if (dist > girl.behavior().followTeleportDistance && tryTeleportToOwner()) return;
 
-        boolean run = owner.isSprinting() || dist > RUN_DISTANCE;
+        boolean run = (owner.isSprinting() || dist > girl.behavior().followRunDistance) && girl.needs().canRun();
         girl.setMode(run ? GirlMode.RUN : GirlMode.WALK);
         double speed = speedModifier * (run ? 1.5 : 1.0);
 

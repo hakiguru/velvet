@@ -32,7 +32,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
+import org.velvetlite.item.NpcEditorWandItem;
+import org.velvetlite.menu.GirlEditorMenu;
 import org.velvetlite.menu.GirlMenu;
+import net.minecraft.world.DifficultyInstance;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.pathfinder.PathType;
@@ -52,7 +57,10 @@ import software.bernie.geckolib.animation.AnimatableManager;
 import software.bernie.geckolib.animation.AnimationController;
 
 import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 
@@ -80,6 +88,14 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<String> DATA_TARGET_POS =
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.STRING);
+    /** Follows her owner around ("Follow me" in her menu); otherwise she stays or wanders. */
+    private static final EntityDataAccessor<Boolean> DATA_FOLLOWING =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Integer> DATA_FOOD =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.INT);
+    /** Bone changes from the NPC editor, see {@link BoneTweaks}. */
+    private static final EntityDataAccessor<CompoundTag> DATA_BONE_TWEAKS =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.COMPOUND_TAG);
     /** 0..1: how far the current scene is; it ends when this is full. */
     private static final EntityDataAccessor<Float> DATA_SCENE_PROGRESS =
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.FLOAT);
@@ -112,10 +128,33 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     private static final int REGEN_INTERVAL = 100;
     private static final int REGEN_DELAY = 200;
 
-    public static final int BAG_SIZE = 9;
+    /** Inventory slots at capacity level 0; each level opens {@link #BAG_SLOTS_PER_LEVEL} more. */
+    public static final int BAG_BASE_SLOTS = 1;
+    public static final int BAG_SLOTS_PER_LEVEL = 2;
+    public static final int BAG_SIZE = BAG_BASE_SLOTS + BAG_SLOTS_PER_LEVEL * GirlSkill.MAX_LEVEL;
+    /** How often she checks for monsters around her. */
+    private static final int DANGER_CHECK_INTERVAL = 10;
+    private static final double DANGER_RADIUS = 8;
+
+    /**
+     * Set by the spawn egg while it spawns her, so she belongs to the player who used it (the egg doesn't
+     * hand the player on to the new entity).
+     */
+    public static final ThreadLocal<Player> SPAWNING_PLAYER = new ThreadLocal<>();
 
     protected final GirlType girlType;
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
+    private final GirlNeeds needs = new GirlNeeds(this);
+    private GirlBehavior behavior = new GirlBehavior();
+    /** Server: players with her menu or her editor open; she waits for them, unless she's in danger. */
+    private final Set<UUID> menuViewers = new HashSet<>();
+    private boolean inDanger;
+    private BoneTweaks boneTweaks = BoneTweaks.NONE;
+    @Nullable private CompoundTag boneTweaksTag;
+    /** Client only: the editor's unsaved bone changes, drawn instead of the saved ones while it's open. */
+    @Nullable public BoneTweaks clientPreviewTweaks;
+    /** Client only: the bone picked in the editor, drawn tinted. */
+    @Nullable public String clientSelectedBone;
     /**
      * Client only: where the partner's eyes are in the current frame (the "steve" head bone), written by
      * the renderer. Lets the riding partner's camera sit exactly in the model's head.
@@ -164,7 +203,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
                 .add(Attributes.MAX_HEALTH, 20.0)
                 // goal speed modifiers are multiplied with this; 0.25 is about a zombie's pace
                 .add(Attributes.MOVEMENT_SPEED, 0.25)
-                .add(Attributes.FOLLOW_RANGE, 30.0);
+                .add(Attributes.FOLLOW_RANGE, 30.0)
+                // a bare fist, like the player's; also what Mob compares weapons by when she picks one up
+                .add(Attributes.ATTACK_DAMAGE, 1.0);
     }
 
     @Override
@@ -183,6 +224,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         builder.define(DATA_SHOULD_BE_AT_TARGET, false);
         builder.define(DATA_TARGET_POS,      "0|0|0");
         builder.define(DATA_SCENE_PROGRESS,  0.0F);
+        builder.define(DATA_FOLLOWING,       false);
+        builder.define(DATA_FOOD,            GirlNeeds.MAX_FOOD);
+        builder.define(DATA_BONE_TWEAKS,     new CompoundTag());
         for (EntityDataAccessor<Integer> skill : DATA_SKILL_XP) builder.define(skill, 0);
     }
 
@@ -191,8 +235,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(1, new PanicGoal(this, 1.5));
         this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Monster.class, 8.0F, 1.0, 1.5,
-                mob -> !(mob instanceof Creeper)));
-        this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Creeper.class, 10.0F, 1.2, 1.6));
+                mob -> !(mob instanceof Creeper) && behavior.fleeMonsters));
+        this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Creeper.class, 10.0F, 1.2, 1.6,
+                mob -> behavior.fleeMonsters));
         this.goalSelector.addGoal(3, new GirlGoHomeGoal(this, 1.0));
         this.goalSelector.addGoal(4, new GirlFollowGoal(this, 1.0));
         this.goalSelector.addGoal(5, new TemptGoal(this, 1.0, Ingredient.of(
@@ -211,7 +256,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         super.tick();
         if (!this.level().isClientSide) {
             scene.tick();
-            tickSkills();
+            double moved = this.isPassenger() ? 0 : Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
+            tickSkills(moved);
+            if (this.isAlive()) needs.tick(moved);
+            if (this.tickCount % DANGER_CHECK_INTERVAL == 0) updateDanger();
         } else {
             double moved = Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
             // positions arrive from the server in uneven steps: average over about half a second
@@ -222,18 +270,81 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     @Override
     protected void customServerAiStep() {
         // During an action the scene controller moves and turns the girl (navigation still ticks);
-        // JUMP stays enabled so FloatGoal keeps her afloat
+        // JUMP stays enabled so FloatGoal keeps her afloat. With her menu open she waits for the player
         boolean busy = getCurrentAction().isBusy();
+        Player viewer = menuViewer();
+        boolean waiting = !busy && viewer != null;
         for (Goal.Flag flag : EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK)) {
-            if (busy) this.goalSelector.disableControlFlag(flag);
+            if (busy || waiting) this.goalSelector.disableControlFlag(flag);
             else this.goalSelector.enableControlFlag(flag);
         }
         super.customServerAiStep();
+        if (waiting) {
+            this.getNavigation().stop();
+            this.getLookControl().setLookAt(viewer, 30.0F, 30.0F);
+        }
 
-        if (this.tickCount % REGEN_INTERVAL == 0 && this.getHealth() < this.getMaxHealth()
+        if (this.tickCount % REGEN_INTERVAL == 0 && this.getHealth() < this.getMaxHealth() && getFood() >= GirlNeeds.REGEN_FOOD
                 && this.tickCount - this.getLastHurtByMobTimestamp() > REGEN_DELAY && this.hurtTime == 0) {
             this.heal(1.0F);
+            needs.addExhaustion(GirlNeeds.EXHAUSTION_PER_HEAL);
         }
+    }
+
+    @Override
+    public void aiStep() {
+        super.aiStep();
+        if (!this.level().isClientSide && this.isAlive() && !getCurrentAction().isBusy() && behavior.pickUpItems) {
+            for (ItemEntity item : this.level().getEntitiesOfClass(ItemEntity.class, this.getBoundingBox().inflate(1.0, 0.5, 1.0))) {
+                if (!item.isRemoved() && !item.getItem().isEmpty() && !item.hasPickUpDelay()) GirlLoot.pickUp(this, item);
+            }
+        }
+    }
+
+    /** Mob's rules for whether a weapon or armor piece is an upgrade. */
+    public boolean isBetterGear(ItemStack candidate, ItemStack current) {
+        return canReplaceCurrentItem(candidate, current);
+    }
+
+    // ---- Danger and open menus ----
+
+    /** Hurt a moment ago, burning, or a monster close by. */
+    public boolean isInDanger() {
+        return inDanger;
+    }
+
+    private void updateDanger() {
+        DamageSource lastDamage = this.getLastDamageSource();
+        boolean danger = this.isOnFire() || lastDamage != null && !lastDamage.is(net.minecraft.world.damagesource.DamageTypes.STARVE)
+                || !this.level().getEntitiesOfClass(Monster.class, this.getBoundingBox().inflate(DANGER_RADIUS, 4, DANGER_RADIUS),
+                        m -> m.isAlive() && !m.isSpectator()).isEmpty();
+        if (danger && !inDanger) closeMenus(); // the only reason to walk away from a player with her menu open
+        inDanger = danger;
+    }
+
+    public void addMenuViewer(Player player) {
+        menuViewers.add(player.getUUID());
+    }
+
+    public void removeMenuViewer(Player player) {
+        menuViewers.remove(player.getUUID());
+    }
+
+    @Nullable
+    private Player menuViewer() {
+        if (menuViewers.isEmpty()) return null;
+        // gone, or looking at another menu by now (a close the menu didn't hear about)
+        menuViewers.removeIf(id -> !(this.level().getPlayerByUUID(id) instanceof Player p)
+                || !(p.containerMenu instanceof GirlMenu m && m.getGirl() == this
+                     || p.containerMenu instanceof GirlEditorMenu e && e.getGirl() == this));
+        return menuViewers.isEmpty() ? null : this.level().getPlayerByUUID(menuViewers.iterator().next());
+    }
+
+    private void closeMenus() {
+        for (UUID id : List.copyOf(menuViewers)) {
+            if (this.level().getPlayerByUUID(id) instanceof ServerPlayer player) player.closeContainer();
+        }
+        menuViewers.clear();
     }
 
     // ---- Synched accessors ----
@@ -293,6 +404,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         return GirlSkill.levelFor(getSkillXp(skill));
     }
 
+    /** Open inventory slots: 1 at capacity level 0, 2 more with each level. */
+    public int getBagCapacity() {
+        return BAG_BASE_SLOTS + BAG_SLOTS_PER_LEVEL * getSkillLevel(GirlSkill.CAPACITY);
+    }
+
     /** Server side; applies the level bonuses when a level is reached. */
     public void addSkillXp(GirlSkill skill, int amount) {
         if (amount <= 0 || this.level().isClientSide) return;
@@ -306,19 +422,19 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         var health = this.getAttribute(Attributes.MAX_HEALTH);
         if (health != null) {
             health.addOrUpdateTransientModifier(new AttributeModifier(ENDURANCE_BONUS,
-                    2.0 * (getSkillLevel(GirlSkill.ENDURANCE) - 1), AttributeModifier.Operation.ADD_VALUE));
+                    2.0 * getSkillLevel(GirlSkill.ENDURANCE), AttributeModifier.Operation.ADD_VALUE));
             if (this.getHealth() > this.getMaxHealth()) this.setHealth(this.getMaxHealth());
         }
         var speed = this.getAttribute(Attributes.MOVEMENT_SPEED);
         if (speed != null) {
             speed.addOrUpdateTransientModifier(new AttributeModifier(AGILITY_BONUS,
-                    0.03 * (getSkillLevel(GirlSkill.AGILITY) - 1), AttributeModifier.Operation.ADD_MULTIPLIED_BASE));
+                    0.03 * getSkillLevel(GirlSkill.AGILITY), AttributeModifier.Operation.ADD_MULTIPLIED_BASE));
         }
     }
 
-    private void tickSkills() {
-        if (!this.isPassenger() && !getCurrentAction().isBusy()) {
-            walkedSinceXp += Math.sqrt((getX() - xo) * (getX() - xo) + (getZ() - zo) * (getZ() - zo));
+    private void tickSkills(double moved) {
+        if (!getCurrentAction().isBusy()) {
+            walkedSinceXp += moved;
             if (walkedSinceXp >= BLOCKS_PER_AGILITY_XP) {
                 walkedSinceXp -= BLOCKS_PER_AGILITY_XP;
                 addSkillXp(GirlSkill.AGILITY, 1);
@@ -332,6 +448,49 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     public GirlSceneController scene() {
         return scene;
+    }
+
+    public GirlNeeds needs() {
+        return needs;
+    }
+
+    public GirlBehavior behavior() {
+        return behavior;
+    }
+
+    public void setBehavior(GirlBehavior behavior) {
+        this.behavior = behavior;
+    }
+
+    public boolean isFollowing() {
+        return this.entityData.get(DATA_FOLLOWING);
+    }
+
+    public void setFollowing(boolean following) {
+        this.entityData.set(DATA_FOLLOWING, following);
+    }
+
+    /** Food points, 0..{@link GirlNeeds#MAX_FOOD}; synced for the menu and the icons above her head. */
+    public int getFood() {
+        return this.entityData.get(DATA_FOOD);
+    }
+
+    public void setFood(int food) {
+        this.entityData.set(DATA_FOOD, food);
+    }
+
+    /** The saved bone changes (parsed once per sync). */
+    public BoneTweaks getBoneTweaks() {
+        CompoundTag tag = this.entityData.get(DATA_BONE_TWEAKS);
+        if (tag != boneTweaksTag) {
+            boneTweaksTag = tag;
+            boneTweaks = BoneTweaks.fromTag(tag);
+        }
+        return boneTweaks;
+    }
+
+    public void setBoneTweaks(BoneTweaks tweaks) {
+        this.entityData.set(DATA_BONE_TWEAKS, tweaks.toTag());
     }
 
     public GirlMode getMode() {
@@ -403,6 +562,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         tag.putString("girl_id", getGirlUUID().toString());
         UUID owner = getOwnerUUID();
         if (owner != null) tag.putString("owner", owner.toString());
+        tag.putBoolean("following", isFollowing());
+        needs.save(tag);
+        tag.putString("behavior", behavior.toJson());
+        tag.put("bone_tweaks", getBoneTweaks().toTag());
         // scenes aren't saved: after a reload the partner is gone anyway
         tag.putString("mode", getMode().name());
         tag.putInt("model_variant", getModelVariant());
@@ -424,6 +587,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         super.readAdditionalSaveData(tag);
         if (tag.contains("girl_id"))    setGirlUUID(UUID.fromString(tag.getString("girl_id")));
         if (tag.contains("owner"))      setOwnerUUID(UUID.fromString(tag.getString("owner")));
+        // before 1.2 having an owner meant following him
+        setFollowing(tag.contains("following") ? tag.getBoolean("following") : tag.contains("owner"));
+        needs.load(tag);
+        if (tag.contains("behavior")) behavior = GirlBehavior.fromJsonOrDefault(tag.getString("behavior"));
+        if (tag.contains("bone_tweaks")) setBoneTweaks(BoneTweaks.fromTag(tag.getCompound("bone_tweaks")));
         if (tag.contains("mode"))       setMode(GirlMode.valueOf(tag.getString("mode")));
         if (tag.contains("model_variant")) setModelVariant(tag.getInt("model_variant"));
         if (tag.contains("custom_model")) setCustomModelCode(tag.getString("custom_model"));
@@ -453,7 +621,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     @Override
     protected @NotNull InteractionResult mobInteract(Player player, @NotNull InteractionHand hand) {
-        if (hand != InteractionHand.MAIN_HAND || player.isShiftKeyDown() || getCurrentAction().isBusy()) {
+        // the editor wand has its own use on her
+        if (hand != InteractionHand.MAIN_HAND || player.isShiftKeyDown() || getCurrentAction().isBusy()
+                || player.getItemInHand(hand).getItem() instanceof NpcEditorWandItem) {
             return super.mobInteract(player, hand);
         }
         if (player instanceof ServerPlayer serverPlayer) openMenu(serverPlayer);
@@ -462,8 +632,33 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     public void openMenu(ServerPlayer player) {
         if (getCurrentAction().isBusy() || !GirlManager.canCommand(player, this)) return;
+        claimBy(player);
         player.openMenu(new SimpleMenuProvider((id, inv, p) -> new GirlMenu(id, inv, this), getName()),
                 buf -> buf.writeVarInt(this.getId()));
+    }
+
+    public void openEditor(ServerPlayer player) {
+        if (getCurrentAction().isBusy() || !GirlManager.canEdit(player, this)) return;
+        claimBy(player);
+        String json = behavior.toJson();
+        player.openMenu(new SimpleMenuProvider((id, inv, p) -> new GirlEditorMenu(id, inv, this, json), getName()),
+                buf -> {
+                    buf.writeVarInt(this.getId());
+                    buf.writeUtf(json, GirlBehavior.MAX_LENGTH * 2);
+                });
+    }
+
+    /** Every girl belongs to someone: one without an owner (summoned, from older saves) to whoever deals with her first. */
+    private void claimBy(Player player) {
+        if (getOwnerUUID() == null) setOwnerUUID(player.getUUID());
+    }
+
+    @Override
+    public @Nullable SpawnGroupData finalizeSpawn(@NotNull ServerLevelAccessor level, @NotNull DifficultyInstance difficulty,
+                                                  @NotNull MobSpawnType spawnType, @Nullable SpawnGroupData data) {
+        Player spawner = SPAWNING_PLAYER.get();
+        if (spawnType == MobSpawnType.SPAWN_EGG && spawner != null) setOwnerUUID(spawner.getUUID());
+        return super.finalizeSpawn(level, difficulty, spawnType, data);
     }
 
     // ---- Riding: the scene partner is a passenger, so the girl positions him every tick ----
@@ -499,7 +694,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         return false;
     }
 
-    /** Random wandering, only while the girl has no owner, no home order and nothing to do. */
+    /** Random wandering, only while she isn't following anyone, has no home order and nothing to do. */
     private static final class GirlStrollGoal extends WaterAvoidingRandomStrollGoal {
         private final AbstractGirlEntity girl;
 
@@ -510,12 +705,12 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
         @Override
         public boolean canUse() {
-            return girl.getOwnerUUID() == null && !girl.shouldBeAtTarget() && super.canUse();
+            return girl.behavior().wander && !girl.isFollowing() && !girl.shouldBeAtTarget() && super.canUse();
         }
 
         @Override
         public boolean canContinueToUse() {
-            return girl.getOwnerUUID() == null && !girl.shouldBeAtTarget() && super.canContinueToUse();
+            return girl.behavior().wander && !girl.isFollowing() && !girl.shouldBeAtTarget() && super.canContinueToUse();
         }
     }
 
@@ -548,7 +743,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         boolean hurt = super.hurt(source, amount);
         if (hurt && !this.level().isClientSide) {
             if (getCurrentAction().isBusy()) scene.stop();
-            if (this.isAlive()) addSkillXp(GirlSkill.ENDURANCE, Math.max(1, Math.round(amount * 3)));
+            // starving doesn't toughen her up
+            if (this.isAlive() && !source.is(net.minecraft.world.damagesource.DamageTypes.STARVE)) {
+                addSkillXp(GirlSkill.ENDURANCE, Math.max(1, Math.round(amount * 3)));
+            }
         }
         return hurt;
     }

@@ -1,62 +1,19 @@
 package org.velvetlite;
 
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.item.Item;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
+/** config/velvet_lite-common.toml. Only its version so far; settings come here as they're added. */
+public final class Config {
+    private Config() {}
 
-@EventBusSubscriber(modid = VelvetLite.MODID)
-public class Config {
+    /** Bumped when the file's layout changes, so older files can be migrated. */
+    public static final int CURRENT_VERSION = 1;
 
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
-    private static final ModConfigSpec.BooleanValue LOG_DIRT_BLOCK = BUILDER
-            .comment("Whether to log the dirt block on common setup")
-            .define("logDirtBlock", true);
-
-    private static final ModConfigSpec.IntValue MAGIC_NUMBER = BUILDER
-            .comment("A magic number")
-            .defineInRange("magicNumber", 42, 0, Integer.MAX_VALUE);
-
-    public static final ModConfigSpec.ConfigValue<String> MAGIC_NUMBER_INTRODUCTION = BUILDER
-            .comment("What you want the introduction message to be for the magic number")
-            .define("magicNumberIntroduction", "The magic number is... ");
-
-    private static final ModConfigSpec.ConfigValue<List<? extends String>> ITEM_STRINGS = BUILDER
-            .comment("A list of items to log on common setup.")
-            .defineListAllowEmpty(
-                    List.of("items"),                 // path
-                    List.of("minecraft:iron_ingot"),  // default
-                    Config::validateItemName);        // validator
+    public static final ModConfigSpec.IntValue CONFIG_VERSION = BUILDER
+            .comment("Version of this file's layout. Set by the mod; don't change it.")
+            .defineInRange("configVersion", CURRENT_VERSION, 1, Integer.MAX_VALUE);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
-
-    public static boolean logDirtBlock;
-    public static int magicNumber;
-    public static String magicNumberIntroduction;
-    public static Set<Item> items;
-
-    private static boolean validateItemName(final Object obj) {
-        return obj instanceof String itemName
-                && BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(itemName));
-    }
-
-    @SubscribeEvent
-    static void onLoad(final ModConfigEvent event) {
-        // Fires for every config of the mod (also ClientConfig); only read our own values
-        if (event.getConfig().getSpec() != SPEC) return;
-        logDirtBlock = LOG_DIRT_BLOCK.get();
-        magicNumber = MAGIC_NUMBER.get();
-        magicNumberIntroduction = MAGIC_NUMBER_INTRODUCTION.get();
-        items = ITEM_STRINGS.get().stream()
-                .map(name -> BuiltInRegistries.ITEM.get(ResourceLocation.parse(name)))
-                .collect(Collectors.toSet());
-    }
 }

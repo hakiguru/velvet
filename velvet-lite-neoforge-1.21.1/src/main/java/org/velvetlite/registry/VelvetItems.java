@@ -5,6 +5,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.common.DeferredSpawnEggItem;
+import org.velvetlite.item.GirlSpawnEggItem;
 import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import org.velvetlite.VelvetLite;
@@ -26,7 +27,7 @@ public final class VelvetItems {
         int base = type.spawnEggColor();
         int spots = (base >> 1) & 0x7F7F7F; // same hue, half brightness
         return ITEMS.register(type.id() + "_spawn_egg",
-                () -> new DeferredSpawnEggItem(entity, base, spots, new Item.Properties()));
+                () -> new GirlSpawnEggItem(entity, base, spots, new Item.Properties()));
     }
 
     public static void register(IEventBus modBus) {

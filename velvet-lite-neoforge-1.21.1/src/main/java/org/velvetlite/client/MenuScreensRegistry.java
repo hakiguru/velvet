@@ -15,5 +15,6 @@ public final class MenuScreensRegistry {
     @SubscribeEvent
     public static void onRegisterScreens(RegisterMenuScreensEvent event) {
         event.register(VelvetMenus.GIRL.get(), org.velvetlite.client.gui.GirlScreen::new);
+        event.register(VelvetMenus.GIRL_EDITOR.get(), org.velvetlite.client.gui.GirlEditorScreen::new);
     }
 }

@@ -19,8 +19,10 @@ import org.velvetlite.entity.girl.GirlManager;
 import org.velvetlite.registry.VelvetMenus;
 
 /**
- * The girl's menu: her armor and the items in her hands (worn and held for real), her 9-slot bag and the
- * player's inventory. The screen has tabs; slots only show and take clicks on the inventory tab.
+ * The girl's menu: her armor and the items in her hands (worn and held for real), her inventory and the
+ * player's. Her inventory has as many open slots as her capacity level allows; closed slots only show up
+ * while they still hold something (from before), so it can be taken out. The screen has tabs; slots only
+ * show and take clicks on the inventory tab.
  */
 public class GirlMenu extends AbstractContainerMenu {
 
@@ -42,8 +44,9 @@ public class GirlMenu extends AbstractContainerMenu {
     // layout, shared with GirlScreen
     public static final int ARMOR_X = 8, ARMOR_Y = 18;
     public static final int HANDS_X = 80, HANDS_Y = 54;
-    public static final int BAG_X = 108, BAG_Y = 18, BAG_COLUMNS = 3;
-    public static final int PLAYER_X = 8, PLAYER_Y = 108, HOTBAR_Y = 166;
+    public static final int BAG_X = 102, BAG_Y = 29, BAG_COLUMNS = 7;
+    public static final int WIDTH = 236;
+    public static final int PLAYER_X = (WIDTH - 9 * 18) / 2 + 1, PLAYER_Y = 114, HOTBAR_Y = 172;
 
     @Nullable private final AbstractGirlEntity girl;
     /** Client side: whether the screen shows the inventory tab, the only one with slots. */
@@ -63,7 +66,7 @@ public class GirlMenu extends AbstractContainerMenu {
                     .setBackground(InventoryMenu.BLOCK_ATLAS, HAND_ICONS[i]));
         }
         for (int i = 0; i < AbstractGirlEntity.BAG_SIZE; i++) {
-            addSlot(new TabSlot(bag, i, BAG_X + i % BAG_COLUMNS * 18, BAG_Y + i / BAG_COLUMNS * 18));
+            addSlot(new BagSlot(bag, i, BAG_X + i % BAG_COLUMNS * 18, BAG_Y + i / BAG_COLUMNS * 18));
         }
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
@@ -73,6 +76,18 @@ public class GirlMenu extends AbstractContainerMenu {
         for (int col = 0; col < 9; col++) {
             addSlot(new TabSlot(playerInv, col, PLAYER_X + col * 18, HOTBAR_Y));
         }
+        if (girl != null && !playerInv.player.level().isClientSide) girl.addMenuViewer(playerInv.player);
+    }
+
+    @Override
+    public void removed(Player player) {
+        super.removed(player);
+        if (girl != null && !player.level().isClientSide) girl.removeMenuViewer(player);
+    }
+
+    /** Whether her inventory slot {@code index} is open at her current capacity level. */
+    public boolean isBagSlotOpen(int index) {
+        return girl != null && index < girl.getBagCapacity();
     }
 
     /** Client side, from the screen: hides the slots on the tabs without them. */
@@ -124,6 +139,27 @@ public class GirlMenu extends AbstractContainerMenu {
         if (stack.getCount() == original.getCount()) return ItemStack.EMPTY;
         slot.onTake(player, stack);
         return original;
+    }
+
+    /** A slot of her inventory: usable once her capacity opens it. */
+    public class BagSlot extends TabSlot {
+        BagSlot(Container container, int index, int x, int y) {
+            super(container, index, x, y);
+        }
+
+        public boolean isOpen() {
+            return isBagSlotOpen(getContainerSlot());
+        }
+
+        @Override
+        public boolean isActive() {
+            return super.isActive() && (isOpen() || hasItem());
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            return isOpen();
+        }
     }
 
     private class TabSlot extends Slot {

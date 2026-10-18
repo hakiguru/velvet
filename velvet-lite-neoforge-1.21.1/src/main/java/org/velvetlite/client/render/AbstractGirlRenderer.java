@@ -8,6 +8,10 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.EntityAttachment;
+import org.velvetlite.client.gui.StatusIcons;
+import org.velvetlite.entity.girl.BoneTweaks;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -38,6 +42,10 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
     }
 
     private static final double NAME_DISTANCE = 64.0;
+    /** Hearts and food only show up close by. */
+    private static final double STATUS_DISTANCE = 16.0;
+    private static final double STATUS_ABOVE_NAME = 0.04;
+    private static final int SELECTED_TINT = 0xFFFF9A9A;
     /** Name height above the partner's eyes: about where a vanilla name tag is above a player's eyes. */
     private static final double NAME_ABOVE_EYES = 0.6;
     /** Name height above the girl's head pivot (her neck) during scenes. */
@@ -85,6 +93,61 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
                        int packedLight) {
         super.render(girl, entityYaw, partialTick, poseStack, bufferSource, packedLight);
         renderPartnerName(girl, partialTick, poseStack, bufferSource, packedLight);
+        renderStatus(girl, poseStack, bufferSource, packedLight);
+    }
+
+    /** Her hearts and food above the name tag, like the player's HUD; not during scenes. */
+    private void renderStatus(T girl, PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
+        if (girl.getCurrentAction().isBusy() || !shouldShowName(girl)
+                || this.entityRenderDispatcher.distanceToSqr(girl) > STATUS_DISTANCE * STATUS_DISTANCE) return;
+        Vec3 nameTag = girl.getAttachments().getNullable(EntityAttachment.NAME_TAG, 0, girl.getViewYRot(1.0F));
+        if (nameTag == null) return;
+        poseStack.pushPose();
+        // the name tag's top edge is half a block above its attachment point
+        poseStack.translate(nameTag.x, nameTag.y + 0.5 + STATUS_ABOVE_NAME, nameTag.z);
+        StatusIcons.renderInWorld(poseStack, bufferSource, this.entityRenderDispatcher.cameraOrientation(),
+                girl.getHealth(), girl.getMaxHealth(), girl.getFood(), packedLight);
+        poseStack.popPose();
+    }
+
+    /**
+     * Bone changes from the editor (or its unsaved preview) on top of the animation, only while this bone is
+     * drawn; the bone selected in the editor is tinted.
+     */
+    @Override
+    public void renderRecursively(PoseStack poseStack, T girl, GeoBone bone, RenderType renderType, MultiBufferSource bufferSource,
+                                  VertexConsumer buffer, boolean isReRender, float partialTick, int packedLight,
+                                  int packedOverlay, int colour) {
+        BoneTweaks tweaks = girl.clientPreviewTweaks != null ? girl.clientPreviewTweaks : girl.getBoneTweaks();
+        BoneTweaks.Tweak t = tweaks.isEmpty() ? null : tweaks.get(bone.getName());
+        if (bone.getName().equals(girl.clientSelectedBone)) colour = SELECTED_TINT;
+        if (t == null) {
+            super.renderRecursively(poseStack, girl, bone, renderType, bufferSource, buffer, isReRender, partialTick,
+                    packedLight, packedOverlay, colour);
+            return;
+        }
+        float sx = bone.getScaleX(), sy = bone.getScaleY(), sz = bone.getScaleZ();
+        float px = bone.getPosX(), py = bone.getPosY(), pz = bone.getPosZ();
+        float rx = bone.getRotX(), ry = bone.getRotY(), rz = bone.getRotZ();
+        bone.updateScale(sx * t.scale()[0], sy * t.scale()[1], sz * t.scale()[2]);
+        bone.updatePosition(px + t.offset()[0], py + t.offset()[1], pz + t.offset()[2]);
+        bone.updateRotation(rx + t.rotation()[0] * Mth.DEG_TO_RAD, ry + t.rotation()[1] * Mth.DEG_TO_RAD,
+                rz + t.rotation()[2] * Mth.DEG_TO_RAD);
+        try {
+            super.renderRecursively(poseStack, girl, bone, renderType, bufferSource, buffer, isReRender, partialTick,
+                    packedLight, packedOverlay, colour);
+        } finally {
+            // the animation processor works from these values next frame: leave them as it set them
+            bone.setScaleX(sx);
+            bone.setScaleY(sy);
+            bone.setScaleZ(sz);
+            bone.setPosX(px);
+            bone.setPosY(py);
+            bone.setPosZ(pz);
+            bone.setRotX(rx);
+            bone.setRotY(ry);
+            bone.setRotZ(rz);
+        }
     }
 
     /**

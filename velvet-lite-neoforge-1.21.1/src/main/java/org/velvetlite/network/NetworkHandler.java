@@ -20,10 +20,11 @@ public final class NetworkHandler {
     }
 
     private static void onRegister(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar r = event.registrar(VelvetLite.MODID).versioned("1");
+        PayloadRegistrar r = event.registrar(VelvetLite.MODID).versioned("2");
 
         // --- C2S ---
-        r.playToServer(SetGirlOwnerPacket.TYPE,       SetGirlOwnerPacket.STREAM_CODEC,       SetGirlOwnerPacket::handle);
+        r.playToServer(SetFollowingPacket.TYPE,       SetFollowingPacket.STREAM_CODEC,       SetFollowingPacket::handle);
+        r.playToServer(SaveGirlEditorPacket.TYPE,     SaveGirlEditorPacket.STREAM_CODEC,     SaveGirlEditorPacket::handle);
         r.playToServer(SendGirlHomePacket.TYPE,       SendGirlHomePacket.STREAM_CODEC,       SendGirlHomePacket::handle);
         r.playToServer(SetHomePositionPacket.TYPE,    SetHomePositionPacket.STREAM_CODEC,    SetHomePositionPacket::handle);
         r.playToServer(SetFutaStatePacket.TYPE,       SetFutaStatePacket.STREAM_CODEC,       SetFutaStatePacket::handle);

@@ -101,10 +101,21 @@ public final class GirlManager {
         return girl != null && girl.getCurrentAction().isAttached() ? girl : null;
     }
 
-    /** Whether {@code player} may give orders to {@code girl}: close enough and not someone else's. */
+    private static final double COMMAND_DISTANCE = 8.0;
+
+    /**
+     * Whether {@code player} may give orders to {@code girl}: close enough and hers (a girl without an owner
+     * becomes the player's as soon as he opens her menu).
+     */
     public static boolean canCommand(Player player, AbstractGirlEntity girl) {
         UUID owner = girl.getOwnerUUID();
-        return girl.distanceToSqr(player) <= 8.0 * 8.0 && (owner == null || owner.equals(player.getUUID()));
+        return girl.distanceToSqr(player) <= COMMAND_DISTANCE * COMMAND_DISTANCE
+                && (owner == null || owner.equals(player.getUUID()));
+    }
+
+    /** The editor: her owner, or an operator for anyone's girl. */
+    public static boolean canEdit(Player player, AbstractGirlEntity girl) {
+        return canCommand(player, girl) || player.hasPermissions(2) && girl.distanceToSqr(player) <= COMMAND_DISTANCE * COMMAND_DISTANCE;
     }
 
     @Nullable
