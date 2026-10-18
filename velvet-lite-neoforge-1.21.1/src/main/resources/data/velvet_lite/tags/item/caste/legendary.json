@@ -1,0 +1,19 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:dragon_egg",
+    "minecraft:nether_star",
+    "minecraft:elytra",
+    "minecraft:beacon",
+    "minecraft:enchanted_golden_apple",
+    "minecraft:totem_of_undying",
+    "minecraft:heavy_core",
+    "minecraft:mace",
+    "minecraft:conduit",
+    "minecraft:heart_of_the_sea",
+    "minecraft:dragon_head",
+    "minecraft:netherite_block",
+    "minecraft:trident",
+    "minecraft:end_crystal"
+  ]
+}

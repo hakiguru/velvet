@@ -113,9 +113,10 @@ public final class GirlManager {
                 && (owner == null || owner.equals(player.getUUID()));
     }
 
-    /** The editor: her owner, or an operator for anyone's girl. */
+    /** The editor, from anywhere: her owner (or anyone, while she has none), or an operator for anyone's girl. */
     public static boolean canEdit(Player player, AbstractGirlEntity girl) {
-        return canCommand(player, girl) || player.hasPermissions(2) && girl.distanceToSqr(player) <= COMMAND_DISTANCE * COMMAND_DISTANCE;
+        UUID owner = girl.getOwnerUUID();
+        return owner == null || owner.equals(player.getUUID()) || player.hasPermissions(2);
     }
 
     @Nullable

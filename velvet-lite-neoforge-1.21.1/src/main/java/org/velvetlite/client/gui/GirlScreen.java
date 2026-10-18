@@ -214,12 +214,8 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
         if (t.icon != null) {
             g.renderItem(t.icon, icon[0], icon[1]);
         } else {
-            // the HUD heart is 9 pixels: twice as big it's about the size of an item
-            g.pose().pushPose();
-            g.pose().translate(icon[0] - 1, icon[1] - 1, 0);
-            g.pose().scale(2, 2, 1);
-            StatusIcons.heart(g, 0, 0);
-            g.pose().popPose();
+            // the 9 pixel HUD heart at its own size, centred where an item icon would be
+            StatusIcons.heart(g, icon[0] + 4, icon[1] + 4);
         }
     }
 
@@ -372,7 +368,7 @@ public class GirlScreen extends AbstractContainerScreen<GirlMenu> {
             if (!(slot instanceof GirlMenu.BagSlot bag) || slot.isActive()) continue;
             int x = leftPos + slot.x, y = topPos + slot.y;
             if (mouseX < x || mouseX >= x + 16 || mouseY < y || mouseY >= y + 16) continue;
-            int level = Math.ceilDiv(bag.getContainerSlot() + 1 - AbstractGirlEntity.BAG_BASE_SLOTS, AbstractGirlEntity.BAG_SLOTS_PER_LEVEL);
+            int level = AbstractGirlEntity.levelOpeningSlot(bag.getContainerSlot());
             g.renderTooltip(font, Component.translatable("gui.velvet_lite.slot_closed",
                     Component.translatable(GirlSkill.CAPACITY.translationKey()), level), mouseX, mouseY);
             return;

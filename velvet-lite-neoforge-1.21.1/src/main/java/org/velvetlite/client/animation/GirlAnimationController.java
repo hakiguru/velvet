@@ -35,7 +35,7 @@ public final class GirlAnimationController {
         AbstractGirlEntity girl = state.getAnimatable();
         GirlAction action = girl.getCurrentAction();
         // the girl stands still during actions; only walking to the bed uses the normal gait
-        if (action.isBusy() && action != GirlAction.DOGGY_TO_BED) {
+        if (girl.clientPreviewAnimation != null || action.isBusy() && action != GirlAction.DOGGY_TO_BED) {
             return PlayState.STOP;
         }
 
@@ -111,6 +111,11 @@ public final class GirlAnimationController {
     public static void ignoreKeyframe(SoundKeyframeEvent<AbstractGirlEntity> event) {}
 
     public static PlayState actionPredicate(AnimationState<AbstractGirlEntity> state) {
+        String preview = state.getAnimatable().clientPreviewAnimation;
+        if (preview != null) {
+            // the editor's pose buttons: any animation of hers, looped
+            return find(state.getAnimatable().getGirlType(), Mode.LOOP, preview).map(state::setAndContinue).orElse(PlayState.STOP);
+        }
         GirlAction action = state.getAnimatable().getCurrentAction();
         if (action.animation == null) {
             return PlayState.STOP;

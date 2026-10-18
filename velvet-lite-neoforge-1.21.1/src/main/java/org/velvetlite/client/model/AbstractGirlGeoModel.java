@@ -87,8 +87,19 @@ public abstract class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends
         return loc("geo/" + folder + "/" + base + ".geo.json");
     }
 
+    /** Her own texture, or a custom skin from the editor that replaces it (once it has arrived). */
     @Override
     public ResourceLocation getTextureResource(T girl) {
+        org.velvetlite.skin.GirlSkin skin = girl.getSkin();
+        if (skin != null && skin.mode() == org.velvetlite.skin.GirlSkin.Mode.REPLACE) {
+            ResourceLocation custom = org.velvetlite.client.skin.SkinCache.texture(skin);
+            if (custom != null) return custom;
+        }
+        return texture;
+    }
+
+    /** The texture that comes with the model, to export as a starting point for a skin. */
+    public ResourceLocation defaultTexture() {
         return texture;
     }
 

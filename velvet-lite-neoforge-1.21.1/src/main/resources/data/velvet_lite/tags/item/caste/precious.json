@@ -1,0 +1,33 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:diamond",
+    "minecraft:diamond_block",
+    "minecraft:diamond_ore",
+    "minecraft:deepslate_diamond_ore",
+    "minecraft:netherite_ingot",
+    "minecraft:netherite_scrap",
+    "minecraft:ancient_debris",
+    "minecraft:emerald_block",
+    "minecraft:echo_shard",
+    "minecraft:shulker_shell",
+    "minecraft:golden_apple",
+    "minecraft:recovery_compass",
+    "minecraft:wither_skeleton_skull",
+    "minecraft:sniffer_egg",
+    "minecraft:dragon_breath",
+    "minecraft:ominous_trial_key",
+    "minecraft:ominous_bottle",
+    "minecraft:diamond_horse_armor",
+    "minecraft:wolf_armor",
+    "minecraft:breeze_rod",
+    {"id": "#c:gems/diamond", "required": false},
+    {"id": "#c:ingots/netherite", "required": false},
+    {"id": "#c:storage_blocks/diamond", "required": false},
+    {"id": "#c:storage_blocks/netherite", "required": false},
+    {"id": "#c:ores/diamond", "required": false},
+    {"id": "#c:ores/netherite_scrap", "required": false},
+    {"id": "#c:shulker_boxes", "required": false},
+    {"id": "#minecraft:shulker_boxes", "required": false}
+  ]
+}

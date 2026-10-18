@@ -30,6 +30,12 @@ import org.velvetlite.network.packet.SceneControlPacket;
 public final class ClientEvents {
     private ClientEvents() {}
 
+    /** Skins of one world aren't the next one's. */
+    @SubscribeEvent
+    public static void onLogout(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        org.velvetlite.client.skin.SkinCache.clear();
+    }
+
     /** The speed key state the server last heard about. */
     private static boolean sentFast;
 

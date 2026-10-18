@@ -11,6 +11,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityAttachment;
 import org.velvetlite.client.gui.StatusIcons;
+import org.velvetlite.client.gui.editor.ModelPicker;
+import net.minecraft.util.FastColor;
 import org.velvetlite.entity.girl.BoneTweaks;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
@@ -39,6 +41,7 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
         addRenderLayer(new GirlArmorLayer<>(this));
         addRenderLayer(new GirlHeldItemLayer<>(this));
         addRenderLayer(new PartnerSkinLayer<>(this));
+        addRenderLayer(new org.velvetlite.client.render.layer.SkinOverlayLayer<>(this));
     }
 
     private static final double NAME_DISTANCE = 64.0;
@@ -112,7 +115,8 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
 
     /**
      * Bone changes from the editor (or its unsaved preview) on top of the animation, only while this bone is
-     * drawn; the bone selected in the editor is tinted.
+     * drawn: shape, tint (for the bone and everything on it) and hiding. The bone selected in the editor is
+     * highlighted.
      */
     @Override
     public void renderRecursively(PoseStack poseStack, T girl, GeoBone bone, RenderType renderType, MultiBufferSource bufferSource,
@@ -120,10 +124,24 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
                                   int packedOverlay, int colour) {
         BoneTweaks tweaks = girl.clientPreviewTweaks != null ? girl.clientPreviewTweaks : girl.getBoneTweaks();
         BoneTweaks.Tweak t = tweaks.isEmpty() ? null : tweaks.get(bone.getName());
-        if (bone.getName().equals(girl.clientSelectedBone)) colour = SELECTED_TINT;
+        if (t != null && t.tint != BoneTweaks.NO_TINT) colour = FastColor.ARGB32.multiply(colour, t.tint);
+        if (bone.getName().equals(girl.clientSelectedBone)) colour = FastColor.ARGB32.multiply(colour, SELECTED_TINT);
+        if (ModelPicker.active != null) parentPoses.put(bone, new Matrix4f(poseStack.last().pose()));
         if (t == null) {
             super.renderRecursively(poseStack, girl, bone, renderType, bufferSource, buffer, isReRender, partialTick,
                     packedLight, packedOverlay, colour);
+            return;
+        }
+        boolean hidden = bone.isHidden(), childrenHidden = bone.isHidingChildren();
+        if (t.hidden) bone.setHidden(true);
+        if (!t.movesBone()) {
+            try {
+                super.renderRecursively(poseStack, girl, bone, renderType, bufferSource, buffer, isReRender, partialTick,
+                        packedLight, packedOverlay, colour);
+            } finally {
+                bone.setHidden(hidden);
+                bone.setChildrenHidden(childrenHidden);
+            }
             return;
         }
         float sx = bone.getScaleX(), sy = bone.getScaleY(), sz = bone.getScaleZ();
@@ -147,7 +165,21 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
             bone.setRotX(rx);
             bone.setRotY(ry);
             bone.setRotZ(rz);
+            bone.setHidden(hidden);
+            bone.setChildrenHidden(childrenHidden);
         }
+    }
+
+    /** The matrix each bone's own movement starts from, for the editor's handles; only while it picks. */
+    private final java.util.Map<GeoBone, Matrix4f> parentPoses = new java.util.IdentityHashMap<>();
+
+    @Override
+    public void renderCubesOfBone(PoseStack poseStack, GeoBone bone, VertexConsumer buffer, int packedLight,
+                                  int packedOverlay, int colour) {
+        super.renderCubesOfBone(poseStack, bone, buffer, packedLight, packedOverlay, colour);
+        ModelPicker picker = ModelPicker.active;
+        if (picker != null && !bone.isHidden()) picker.capture(poseStack, bone, parentPoses.remove(bone));
+        else if (picker == null && !parentPoses.isEmpty()) parentPoses.clear();
     }
 
     /**

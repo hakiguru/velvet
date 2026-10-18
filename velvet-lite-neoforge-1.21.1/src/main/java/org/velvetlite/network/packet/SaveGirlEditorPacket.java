@@ -16,10 +16,16 @@ import org.velvetlite.entity.girl.AbstractGirlEntity;
 import org.velvetlite.entity.girl.BoneTweaks;
 import org.velvetlite.entity.girl.GirlBehavior;
 import org.velvetlite.entity.girl.GirlManager;
+import org.velvetlite.entity.girl.OwnedGirls;
 import org.velvetlite.menu.GirlEditorMenu;
+import org.velvetlite.skin.GirlSkin;
+import org.velvetlite.skin.SkinStore;
 
-/** C2S: the NPC editor's "Save": name, bone changes and behavior JSON, all at once. */
-public record SaveGirlEditorPacket(String name, CompoundTag boneTweaks, String behaviorJson) implements CustomPacketPayload {
+/**
+ * C2S: the NPC editor's "Save": name, bone changes, skin ("" for none, else "mode:hash" of an uploaded one)
+ * and behavior JSON, all at once.
+ */
+public record SaveGirlEditorPacket(String name, CompoundTag boneTweaks, String skin, String behaviorJson) implements CustomPacketPayload {
 
     public static final int MAX_NAME_LENGTH = 32;
 
@@ -30,6 +36,7 @@ public record SaveGirlEditorPacket(String name, CompoundTag boneTweaks, String b
             StreamCodec.composite(
                     ByteBufCodecs.stringUtf8(MAX_NAME_LENGTH * 4), SaveGirlEditorPacket::name,
                     ByteBufCodecs.COMPOUND_TAG, SaveGirlEditorPacket::boneTweaks,
+                    ByteBufCodecs.stringUtf8(64), SaveGirlEditorPacket::skin,
                     ByteBufCodecs.stringUtf8(GirlBehavior.MAX_LENGTH * 4), SaveGirlEditorPacket::behaviorJson,
                     SaveGirlEditorPacket::new);
 
@@ -50,11 +57,23 @@ public record SaveGirlEditorPacket(String name, CompoundTag boneTweaks, String b
                         .withStyle(ChatFormatting.RED));
                 return;
             }
+            // the server itself would call those addresses
+            if (behavior.provider.local && !GirlEditorMenu.mayUseLocalEndpoints(player)
+                    && !(behavior.provider == girl.behavior().provider && behavior.endpoint.equals(girl.behavior().endpoint))) {
+                player.sendSystemMessage(Component.translatable("editor.velvet_lite.ai.local_not_allowed").withStyle(ChatFormatting.RED));
+                behavior.provider = girl.behavior().provider;
+                behavior.endpoint = girl.behavior().endpoint;
+            }
+            GirlSkin skin = pkt.skin().isEmpty() ? null : GirlSkin.decode(pkt.skin());
+            if (skin != null && !SkinStore.has(player.server, skin.hash())) skin = girl.getSkin(); // upload not through
+
             String name = StringUtil.filterText(pkt.name()).trim();
             if (name.length() > MAX_NAME_LENGTH) name = name.substring(0, MAX_NAME_LENGTH);
             girl.setCustomNameString(name);
             girl.setBoneTweaks(BoneTweaks.fromTag(pkt.boneTweaks()));
+            girl.setSkin(skin);
             girl.setBehavior(behavior);
+            OwnedGirls.get(player.server).update(girl);
         });
     }
 }

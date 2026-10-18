@@ -20,11 +20,15 @@ public final class NetworkHandler {
     }
 
     private static void onRegister(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar r = event.registrar(VelvetLite.MODID).versioned("2");
+        PayloadRegistrar r = event.registrar(VelvetLite.MODID).versioned("3");
 
         // --- C2S ---
         r.playToServer(SetFollowingPacket.TYPE,       SetFollowingPacket.STREAM_CODEC,       SetFollowingPacket::handle);
         r.playToServer(SaveGirlEditorPacket.TYPE,     SaveGirlEditorPacket.STREAM_CODEC,     SaveGirlEditorPacket::handle);
+        r.playToServer(EditorSelectGirlPacket.TYPE,   EditorSelectGirlPacket.STREAM_CODEC,   EditorSelectGirlPacket::handle);
+        r.playToServer(SetAiKeyPacket.TYPE,           SetAiKeyPacket.STREAM_CODEC,           SetAiKeyPacket::handle);
+        r.playToServer(FetchModelsPacket.TYPE,        FetchModelsPacket.STREAM_CODEC,        FetchModelsPacket::handle);
+        r.playToServer(SkinRequestPacket.TYPE,        SkinRequestPacket.STREAM_CODEC,        SkinRequestPacket::handle);
         r.playToServer(SendGirlHomePacket.TYPE,       SendGirlHomePacket.STREAM_CODEC,       SendGirlHomePacket::handle);
         r.playToServer(SetHomePositionPacket.TYPE,    SetHomePositionPacket.STREAM_CODEC,    SetHomePositionPacket::handle);
         r.playToServer(SetFutaStatePacket.TYPE,       SetFutaStatePacket.STREAM_CODEC,       SetFutaStatePacket::handle);
@@ -37,12 +41,15 @@ public final class NetworkHandler {
         // --- both directions (handlers branch on ctx.flow()) ---
         r.playToClient(GirlChatPacket.TYPE, GirlChatPacket.STREAM_CODEC, GirlChatPacket::handle);
         r.playBidirectional(SetCustomModelPacket.TYPE, SetCustomModelPacket.STREAM_CODEC, SetCustomModelPacket::handle);
+        r.playBidirectional(SkinChunkPacket.TYPE, SkinChunkPacket.STREAM_CODEC, SkinChunkPacket::handle);
         r.playBidirectional(ChunkedModelDataPacket.TYPE, ChunkedModelDataPacket.STREAM_CODEC, ChunkedModelDataPacket::handle);
 
         // --- S2C ---
         r.playToClient(CopyToClipboardPacket.TYPE,    CopyToClipboardPacket.STREAM_CODEC,    CopyToClipboardPacket::handle);
         r.playToClient(SendCustomModelDataPacket.TYPE,SendCustomModelDataPacket.STREAM_CODEC,SendCustomModelDataPacket::handle);
         r.playToClient(SetDynamicModelPacket.TYPE,    SetDynamicModelPacket.STREAM_CODEC,    SetDynamicModelPacket::handle);
+        r.playToClient(ModelListPacket.TYPE,          ModelListPacket.STREAM_CODEC,          ModelListPacket::handle);
+        r.playToClient(SkinUploadResultPacket.TYPE,   SkinUploadResultPacket.STREAM_CODEC,   SkinUploadResultPacket::handle);
         r.playToClient(HornyMeterPacket.TYPE,         HornyMeterPacket.STREAM_CODEC,         HornyMeterPacket::handle);
     }
 

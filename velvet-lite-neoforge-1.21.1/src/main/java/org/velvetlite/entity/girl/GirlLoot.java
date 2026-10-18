@@ -6,52 +6,29 @@ import net.minecraft.tags.EnchantmentTags;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.*;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.neoforged.neoforge.common.Tags;
-
-import java.util.Map;
+import org.velvetlite.entity.girl.loot.ItemCaste;
+import org.velvetlite.entity.girl.loot.ItemCastes;
+import org.velvetlite.entity.girl.loot.LootContext;
 
 /**
  * Picking up items: anything thrown to her (or lying where she walks) goes into her inventory. Armor, a shield
  * and weapons go straight into her equipment slots when those are free or hold something worse, so nothing
  * in the inventory has to make room for them.
  * <p>
- * With a full inventory she keeps what's worth more to her right now, and drops the least valuable stack to
- * make room: normally resources and good enchantments, food on top of that when she's hungry, and weapons
- * and armor when she's in danger.
+ * With a full inventory she sorts by {@link ItemCaste}: for an item of a higher caste than the lowest one she
+ * carries, she throws out the least worth of those lowest stacks; anything else stays on the ground. So with a
+ * full inventory and a diamond, a smithing template and rotten flesh on the ground, she drops two of her
+ * cheapest stacks for the diamond and the template and leaves the flesh.
  */
 public final class GirlLoot {
 
     private GirlLoot() {}
 
-    public enum Mood { CALM, HUNGRY, IN_DANGER }
-
-    /** Hungrier than this (food points), food is worth much more to her. */
-    private static final int HUNGRY_BELOW = 14;
     /** Thrown away stacks can't be picked up again for this long, as when a player drops them. */
     private static final int DROP_PICKUP_DELAY = 40;
-
-    private static final Map<Item, Double> WORTH = Map.ofEntries(
-            Map.entry(Items.NETHERITE_BLOCK, 1080.0), Map.entry(Items.NETHERITE_INGOT, 120.0),
-            Map.entry(Items.NETHERITE_SCRAP, 30.0), Map.entry(Items.ANCIENT_DEBRIS, 30.0),
-            Map.entry(Items.DIAMOND_BLOCK, 360.0), Map.entry(Items.DIAMOND, 40.0),
-            Map.entry(Items.EMERALD_BLOCK, 225.0), Map.entry(Items.EMERALD, 25.0),
-            Map.entry(Items.GOLD_BLOCK, 90.0), Map.entry(Items.GOLD_INGOT, 10.0), Map.entry(Items.RAW_GOLD, 8.0),
-            Map.entry(Items.IRON_BLOCK, 54.0), Map.entry(Items.IRON_INGOT, 6.0), Map.entry(Items.RAW_IRON, 5.0),
-            Map.entry(Items.COPPER_INGOT, 1.5), Map.entry(Items.LAPIS_LAZULI, 2.0), Map.entry(Items.REDSTONE, 1.0),
-            Map.entry(Items.QUARTZ, 1.5), Map.entry(Items.AMETHYST_SHARD, 1.5), Map.entry(Items.COAL, 1.0),
-            Map.entry(Items.ENDER_PEARL, 6.0), Map.entry(Items.BLAZE_ROD, 6.0), Map.entry(Items.GHAST_TEAR, 10.0),
-            Map.entry(Items.TOTEM_OF_UNDYING, 80.0), Map.entry(Items.NETHER_STAR, 200.0),
-            Map.entry(Items.ELYTRA, 150.0), Map.entry(Items.ENCHANTED_GOLDEN_APPLE, 150.0),
-            Map.entry(Items.GOLDEN_APPLE, 25.0), Map.entry(Items.EXPERIENCE_BOTTLE, 4.0));
-
-    public static Mood mood(AbstractGirlEntity girl) {
-        if (girl.isInDanger()) return Mood.IN_DANGER;
-        return girl.getFood() < HUNGRY_BELOW ? Mood.HUNGRY : Mood.CALM;
-    }
 
     /** Takes as much of the item as she can or wants. */
     public static void pickUp(AbstractGirlEntity girl, ItemEntity entity) {
@@ -59,7 +36,7 @@ public final class GirlLoot {
         int before = stack.getCount();
         ItemStack rest = equipIfBetter(girl, stack.copy());
         if (!rest.isEmpty()) rest = addToBag(girl, rest);
-        if (!rest.isEmpty()) rest = swapForWorse(girl, rest);
+        if (!rest.isEmpty()) rest = swapForLowerCaste(girl, rest, LootContext.of(girl));
         int taken = before - rest.getCount();
         if (taken <= 0) return;
         girl.take(entity, taken); // the pickup animation for everyone around
@@ -67,30 +44,45 @@ public final class GirlLoot {
         if (stack.isEmpty()) entity.discard();
     }
 
+    /** Whether she'd take any of this stack now: it fits, it's better gear, or it outranks something she carries. */
+    public static boolean wants(AbstractGirlEntity girl, ItemStack stack, LootContext context) {
+        if (stack.isEmpty()) return false;
+        if (gearSlot(girl, stack) != null) return true;
+        if (fitsInBag(girl, stack)) return true;
+        int worst = lowestSlot(girl, context);
+        return worst >= 0 && ItemCastes.caste(context, stack).above(ItemCastes.caste(context, girl.getBag().getItem(worst)));
+    }
+
     // ---- Equipment ----
 
-    private static boolean isWeapon(ItemStack stack) {
+    public static boolean isWeapon(ItemStack stack) {
         Item item = stack.getItem();
         return item instanceof SwordItem || item instanceof AxeItem || item instanceof TridentItem || item instanceof MaceItem;
     }
 
-    /** Armor, a shield or a weapon put on right away; returns what's left of the stack. */
-    private static ItemStack equipIfBetter(AbstractGirlEntity girl, ItemStack stack) {
+    /** The slot this stack would go to right away, or null if it's no better than what she wears or holds. */
+    private static EquipmentSlot gearSlot(AbstractGirlEntity girl, ItemStack stack) {
         Item item = stack.getItem();
         EquipmentSlot slot;
         if (item instanceof ArmorItem) slot = girl.getEquipmentSlotForItem(stack);
         else if (item instanceof ShieldItem) slot = EquipmentSlot.OFFHAND;
         else if (isWeapon(stack)) slot = EquipmentSlot.MAINHAND;
-        else return stack;
+        else return null;
 
         ItemStack current = girl.getItemBySlot(slot);
-        if (!current.isEmpty()) {
-            // in her hands only a weapon or a shield gets replaced: anything else the player put there on purpose
-            boolean sameKind = slot.isArmor()
-                    || slot == EquipmentSlot.MAINHAND && isWeapon(current)
-                    || slot == EquipmentSlot.OFFHAND && current.getItem() instanceof ShieldItem;
-            if (!sameKind || !girl.isBetterGear(stack, current)) return stack;
-        }
+        if (current.isEmpty()) return slot;
+        // in her hands only a weapon or a shield gets replaced: anything else the player put there on purpose
+        boolean sameKind = slot.isArmor()
+                || slot == EquipmentSlot.MAINHAND && isWeapon(current)
+                || slot == EquipmentSlot.OFFHAND && current.getItem() instanceof ShieldItem;
+        return sameKind && girl.isBetterGear(stack, current) ? slot : null;
+    }
+
+    /** Armor, a shield or a weapon put on right away; returns what's left of the stack. */
+    private static ItemStack equipIfBetter(AbstractGirlEntity girl, ItemStack stack) {
+        EquipmentSlot slot = gearSlot(girl, stack);
+        if (slot == null) return stack;
+        ItemStack current = girl.getItemBySlot(slot);
         girl.setItemSlot(slot, stack.split(1));
         if (!current.isEmpty()) {
             ItemStack old = addToBag(girl, current);
@@ -100,6 +92,16 @@ public final class GirlLoot {
     }
 
     // ---- Inventory ----
+
+    private static boolean fitsInBag(AbstractGirlEntity girl, ItemStack stack) {
+        SimpleContainer bag = girl.getBag();
+        for (int i = 0; i < girl.getBagCapacity(); i++) {
+            ItemStack slot = bag.getItem(i);
+            if (slot.isEmpty()) return true;
+            if (ItemStack.isSameItemSameComponents(slot, stack) && slot.getCount() < slot.getMaxStackSize()) return true;
+        }
+        return false;
+    }
 
     /** Puts the stack into her open inventory slots (joining equal stacks first); returns what didn't fit. */
     public static ItemStack addToBag(AbstractGirlEntity girl, ItemStack stack) {
@@ -122,25 +124,36 @@ public final class GirlLoot {
         return stack;
     }
 
-    /** Full inventory: drops the least valuable stack if the new one is worth more to her right now. */
-    private static ItemStack swapForWorse(AbstractGirlEntity girl, ItemStack stack) {
-        Mood mood = mood(girl);
+    /** Her open slot with the lowest caste, and of those the stack worth least; -1 if nothing's open. */
+    private static int lowestSlot(AbstractGirlEntity girl, LootContext context) {
         SimpleContainer bag = girl.getBag();
         int worst = -1;
+        ItemCaste worstCaste = null;
         double worstValue = Double.MAX_VALUE;
         for (int i = 0; i < girl.getBagCapacity(); i++) {
-            double v = value(girl, bag.getItem(i), mood);
-            if (v < worstValue) {
-                worstValue = v;
+            ItemStack stack = bag.getItem(i);
+            ItemCaste caste = ItemCastes.caste(context, stack);
+            double value = worth(stack);
+            if (worstCaste == null || worstCaste.above(caste) || caste == worstCaste && value < worstValue) {
                 worst = i;
+                worstCaste = caste;
+                worstValue = value;
             }
         }
-        ItemStack incoming = stack.copyWithCount(Math.min(stack.getCount(), stack.getMaxStackSize()));
-        if (worst < 0 || value(girl, incoming, mood) <= worstValue) return stack;
-        drop(girl, bag.getItem(worst));
-        bag.setItem(worst, incoming);
+        return worst;
+    }
+
+    /** Full inventory: throws out the lowest stack for one of a higher caste; returns what's left of the stack. */
+    private static ItemStack swapForLowerCaste(AbstractGirlEntity girl, ItemStack stack, LootContext context) {
+        ItemCaste incoming = ItemCastes.caste(context, stack);
+        SimpleContainer bag = girl.getBag();
+        while (!stack.isEmpty()) {
+            int worst = lowestSlot(girl, context);
+            if (worst < 0 || !incoming.above(ItemCastes.caste(context, bag.getItem(worst)))) break;
+            drop(girl, bag.getItem(worst));
+            bag.setItem(worst, stack.split(stack.getMaxStackSize()));
+        }
         bag.setChanged();
-        stack.shrink(incoming.getCount());
         return stack;
     }
 
@@ -149,58 +162,28 @@ public final class GirlLoot {
         if (dropped != null) dropped.setPickUpDelay(DROP_PICKUP_DELAY);
     }
 
-    // ---- Worth ----
+    // ---- Worth within a caste ----
 
-    /** What a whole stack is worth to her in this mood. */
-    public static double value(AbstractGirlEntity girl, ItemStack stack, Mood mood) {
+    /**
+     * What a whole stack is worth next to others of its caste, to pick which one to throw out: more items,
+     * durable and enchanted gear and rarer items are worth more.
+     */
+    public static double worth(ItemStack stack) {
         if (stack.isEmpty()) return 0;
-        double each = baseValue(stack);
-
-        FoodProperties food = stack.getFoodProperties(girl);
-        if (food != null && food.nutrition() > 0) {
-            double filling = food.nutrition() + food.saturation();
-            if (GirlNeeds.isHarmful(stack, food)) filling *= 0.2;
-            // she always keeps some food over plain blocks; hungry, food comes first
-            each += filling * (mood == Mood.HUNGRY ? 6 : 2);
-        }
-        if (mood == Mood.IN_DANGER && isGear(stack)) each = each * 4 + 20;
-        return each * stack.getCount();
-    }
-
-    private static boolean isGear(ItemStack stack) {
-        Item item = stack.getItem();
-        return isWeapon(stack) || item instanceof ArmorItem || item instanceof ShieldItem
-                || item instanceof BowItem || item instanceof CrossbowItem || stack.is(Items.TOTEM_OF_UNDYING);
-    }
-
-    /** One item, regardless of mood: rare materials, durable gear and enchantments are worth the most. */
-    private static double baseValue(ItemStack stack) {
-        double value = switch (stack.getRarity()) {
-            case COMMON -> 0.25;
+        double each = switch (stack.getRarity()) {
+            case COMMON -> 1;
             case UNCOMMON -> 4;
             case RARE -> 12;
             case EPIC -> 30;
         };
-        Double listed = WORTH.get(stack.getItem());
-        if (listed != null) {
-            value = Math.max(value, listed);
-        } else if (stack.is(Tags.Items.GEMS)) {
-            value = Math.max(value, 6);
-        } else if (stack.is(Tags.Items.INGOTS)) {
-            value = Math.max(value, 5);
-        } else if (stack.is(Tags.Items.ORES) || stack.is(Tags.Items.RAW_MATERIALS)) {
-            value = Math.max(value, 3);
-        } else if (stack.is(Tags.Items.NUGGETS)) {
-            value = Math.max(value, 0.6);
-        }
         if (stack.isDamageableItem()) {
-            // better materials last longer; worn out gear is worth less
             double durability = stack.getMaxDamage();
-            value += 3 + durability / 100 * (1 - stack.getDamageValue() / durability);
+            each += 3 + durability / 100 * (1 - stack.getDamageValue() / durability);
         }
         for (Object2IntMap.Entry<Holder<Enchantment>> e : EnchantmentHelper.getEnchantmentsForCrafting(stack).entrySet()) {
-            value += (e.getKey().is(EnchantmentTags.CURSE) ? -4 : 8) * e.getIntValue();
+            each += (e.getKey().is(EnchantmentTags.CURSE) ? -4 : 8) * e.getIntValue();
         }
-        return Math.max(0.05, value);
+        // a full stack of something is worth more than one of it, but not 64 times as much
+        return Math.max(0.05, each) * (1 + Math.sqrt(stack.getCount() - 1));
     }
 }

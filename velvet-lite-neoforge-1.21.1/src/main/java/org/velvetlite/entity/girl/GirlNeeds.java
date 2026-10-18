@@ -181,6 +181,11 @@ public final class GirlNeeds {
         return all;
     }
 
+    /** Eats it right away, hungry or not (a golden apple in a fight). */
+    public void eatNow(ItemStack stack) {
+        eat(stack);
+    }
+
     private void eat(ItemStack stack) {
         FoodProperties props = stack.getFoodProperties(girl);
         if (props == null) return;
@@ -197,7 +202,7 @@ public final class GirlNeeds {
         eatCooldown = EAT_COOLDOWN;
     }
 
-    static boolean isHarmful(ItemStack stack, FoodProperties props) {
+    public static boolean isHarmful(ItemStack stack, FoodProperties props) {
         if (stack.is(Items.CHORUS_FRUIT)) return true; // teleports her away
         for (FoodProperties.PossibleEffect effect : props.effects()) {
             if (effect.effect().getEffect().value().getCategory() == MobEffectCategory.HARMFUL) return true;

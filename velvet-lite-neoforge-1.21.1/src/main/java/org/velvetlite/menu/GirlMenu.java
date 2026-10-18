@@ -44,8 +44,8 @@ public class GirlMenu extends AbstractContainerMenu {
     // layout, shared with GirlScreen
     public static final int ARMOR_X = 8, ARMOR_Y = 18;
     public static final int HANDS_X = 80, HANDS_Y = 54;
-    public static final int BAG_X = 102, BAG_Y = 29, BAG_COLUMNS = 7;
-    public static final int WIDTH = 236;
+    public static final int BAG_X = 102, BAG_Y = 29, BAG_COLUMNS = 9;
+    public static final int WIDTH = BAG_X + BAG_COLUMNS * 18 + 7;
     public static final int PLAYER_X = (WIDTH - 9 * 18) / 2 + 1, PLAYER_Y = 114, HOTBAR_Y = 172;
 
     @Nullable private final AbstractGirlEntity girl;

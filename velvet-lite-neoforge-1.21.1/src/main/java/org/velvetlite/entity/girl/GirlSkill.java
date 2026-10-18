@@ -9,9 +9,10 @@ package org.velvetlite.entity.girl;
  *       longer runs and longer without food.</li>
  *   <li>AFFECTION: finished scenes and time spent near her owner; groundwork for relationships.</li>
  *   <li>LUST: finished scenes.</li>
- *   <li>CAPACITY: finished scenes. Her inventory: 1 slot at level 0 and 2 more per level. Later also how
+ *   <li>CAPACITY: finished scenes. Her inventory: 1 slot at level 0, up to 27 at level 10. Later also how
  *       many players a group scene takes and which toys she can use.</li>
  *   <li>AGILITY: distance walked; +3% movement speed per level.</li>
+ *   <li>WEAPONS: hits she lands on monsters.</li>
  *   <li>The rest have no way to grow yet: they come with the activities they're about (fighting, building,
  *       crafting...).</li>
  * </ul>
@@ -24,7 +25,7 @@ public enum GirlSkill {
     KINDNESS(0xFF5CC878, false),
     AGGRESSION(0xFF8C2A2A, false),
     BUILDING(0xFF9C7A54, false),
-    WEAPONS(0xFF9AA4B4, false),
+    WEAPONS(0xFF9AA4B4, true),
     TOOLS(0xFF4C8CA8, false),
     AGILITY(0xFF48A8E0, true);
 

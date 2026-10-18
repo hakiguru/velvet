@@ -15,7 +15,6 @@ import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.ai.goal.AvoidEntityGoal;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.PanicGoal;
@@ -23,8 +22,6 @@ import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
 import net.minecraft.world.entity.ai.goal.TemptGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
-import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.nbt.Tag;
@@ -49,6 +46,13 @@ import org.velvetlite.entity.girl.ai.GirlFollowGoal;
 import org.velvetlite.entity.girl.ai.GirlGoHomeGoal;
 import org.velvetlite.entity.girl.ai.GirlLookAtPlayerGoal;
 import org.velvetlite.entity.girl.ai.GirlOpenDoorGoal;
+import org.velvetlite.entity.girl.ai.GirlCollectItemsGoal;
+import org.velvetlite.entity.girl.survival.GirlDigInGoal;
+import org.velvetlite.entity.girl.survival.GirlFightGoal;
+import org.velvetlite.entity.girl.survival.GirlFleeGoal;
+import org.velvetlite.entity.girl.survival.GirlPillarGoal;
+import org.velvetlite.entity.girl.survival.GirlStealthGoal;
+import org.velvetlite.entity.girl.survival.SurvivalBrain;
 import org.velvetlite.entity.girl.scene.GirlSceneController;
 import software.bernie.geckolib.animatable.GeoAnimatable;
 import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
@@ -96,6 +100,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     /** Bone changes from the NPC editor, see {@link BoneTweaks}. */
     private static final EntityDataAccessor<CompoundTag> DATA_BONE_TWEAKS =
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.COMPOUND_TAG);
+    /** A custom texture from the editor, see {@link org.velvetlite.skin.GirlSkin}; empty for none. */
+    private static final EntityDataAccessor<String> DATA_SKIN =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.STRING);
     /** 0..1: how far the current scene is; it ends when this is full. */
     private static final EntityDataAccessor<Float> DATA_SCENE_PROGRESS =
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.FLOAT);
@@ -128,13 +135,22 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     private static final int REGEN_INTERVAL = 100;
     private static final int REGEN_DELAY = 200;
 
-    /** Inventory slots at capacity level 0; each level opens {@link #BAG_SLOTS_PER_LEVEL} more. */
-    public static final int BAG_BASE_SLOTS = 1;
-    public static final int BAG_SLOTS_PER_LEVEL = 2;
-    public static final int BAG_SIZE = BAG_BASE_SLOTS + BAG_SLOTS_PER_LEVEL * GirlSkill.MAX_LEVEL;
-    /** How often she checks for monsters around her. */
+    /**
+     * Open inventory slots at each capacity level: 2 more per level at first, then 3, and 4 for the last
+     * one, up to a chest's 27.
+     */
+    private static final int[] BAG_SLOTS_AT_LEVEL = {1, 3, 5, 7, 9, 11, 14, 17, 20, 23, 27};
+    public static final int BAG_SIZE = BAG_SLOTS_AT_LEVEL[GirlSkill.MAX_LEVEL];
+    /** How often she checks whether she's in danger (the threats themselves are watched by her survival brain). */
     private static final int DANGER_CHECK_INTERVAL = 10;
-    private static final double DANGER_RADIUS = 8;
+    /** Hurt within this many ticks counts as danger. */
+    private static final int HURT_DANGER_TICKS = 100;
+    /** She only waits for a player with her menu or editor open within this distance. */
+    private static final double WAIT_FOR_VIEWER = 16;
+    private static final ResourceLocation CROUCHING_SPEED = ResourceLocation.fromNamespaceAndPath(VelvetLite.MODID, "crouching");
+    /** Like a sneaking player: under a third of the speed. */
+    private static final double CROUCHING_SLOWDOWN = -0.65;
+    private static final float CROUCHING_HEIGHT = 1.5F / 1.8F;
 
     /**
      * Set by the spawn egg while it spawns her, so she belongs to the player who used it (the egg doesn't
@@ -145,14 +161,20 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     protected final GirlType girlType;
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
     private final GirlNeeds needs = new GirlNeeds(this);
+    private final SurvivalBrain survival = new SurvivalBrain(this);
+    private final org.velvetlite.entity.girl.brain.GirlBrain brain = new org.velvetlite.entity.girl.brain.GirlBrain(this);
     private GirlBehavior behavior = new GirlBehavior();
     /** Server: players with her menu or her editor open; she waits for them, unless she's in danger. */
     private final Set<UUID> menuViewers = new HashSet<>();
     private boolean inDanger;
+    /** When she was last hurt by anything but hunger. */
+    private int lastHurtTick = -HURT_DANGER_TICKS;
     private BoneTweaks boneTweaks = BoneTweaks.NONE;
     @Nullable private CompoundTag boneTweaksTag;
     /** Client only: the editor's unsaved bone changes, drawn instead of the saved ones while it's open. */
     @Nullable public BoneTweaks clientPreviewTweaks;
+    /** Client only: an animation the editor plays on its stand-in of her ("walk", "sit"...), instead of her own. */
+    @Nullable public String clientPreviewAnimation;
     /** Client only: the bone picked in the editor, drawn tinted. */
     @Nullable public String clientSelectedBone;
     /**
@@ -205,7 +227,9 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
                 .add(Attributes.MOVEMENT_SPEED, 0.25)
                 .add(Attributes.FOLLOW_RANGE, 30.0)
                 // a bare fist, like the player's; also what Mob compares weapons by when she picks one up
-                .add(Attributes.ATTACK_DAMAGE, 1.0);
+                .add(Attributes.ATTACK_DAMAGE, 1.0)
+                // the player's: weapons bring their own modifiers, a sword ends up at 1.6 hits a second
+                .add(Attributes.ATTACK_SPEED, 4.0);
     }
 
     @Override
@@ -227,26 +251,36 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         builder.define(DATA_FOLLOWING,       false);
         builder.define(DATA_FOOD,            GirlNeeds.MAX_FOOD);
         builder.define(DATA_BONE_TWEAKS,     new CompoundTag());
+        builder.define(DATA_SKIN,            "");
         for (EntityDataAccessor<Integer> skill : DATA_SKILL_XP) builder.define(skill, 0);
     }
 
     @Override
     protected void registerGoals() {
+        // what to do about danger is up to her survival brain; these carry it out
         this.goalSelector.addGoal(0, new FloatGoal(this));
-        this.goalSelector.addGoal(1, new PanicGoal(this, 1.5));
-        this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Monster.class, 8.0F, 1.0, 1.5,
-                mob -> !(mob instanceof Creeper) && behavior.fleeMonsters));
-        this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Creeper.class, 10.0F, 1.2, 1.6,
-                mob -> behavior.fleeMonsters));
-        this.goalSelector.addGoal(3, new GirlGoHomeGoal(this, 1.0));
-        this.goalSelector.addGoal(4, new GirlFollowGoal(this, 1.0));
-        this.goalSelector.addGoal(5, new TemptGoal(this, 1.0, Ingredient.of(
+        this.goalSelector.addGoal(1, new GirlDigInGoal(this));
+        this.goalSelector.addGoal(1, new GirlPillarGoal(this));
+        this.goalSelector.addGoal(2, new GirlFleeGoal(this));
+        this.goalSelector.addGoal(2, new GirlFightGoal(this));
+        // hurt with her instincts switched off
+        this.goalSelector.addGoal(3, new PanicGoal(this, 1.5) {
+            @Override
+            public boolean canUse() {
+                return survival.tactic() == SurvivalBrain.Tactic.NONE && super.canUse();
+            }
+        });
+        this.goalSelector.addGoal(3, new GirlStealthGoal(this));
+        this.goalSelector.addGoal(4, new GirlGoHomeGoal(this, 1.0));
+        this.goalSelector.addGoal(5, new GirlFollowGoal(this, 1.0));
+        this.goalSelector.addGoal(6, new GirlCollectItemsGoal(this));
+        this.goalSelector.addGoal(6, new TemptGoal(this, 1.0, Ingredient.of(
                 net.minecraft.world.item.Items.GOLD_INGOT,
                 net.minecraft.world.item.Items.GOLD_BLOCK), false));
-        this.goalSelector.addGoal(6, new GirlOpenDoorGoal(this, true));
-        this.goalSelector.addGoal(7, new GirlStrollGoal(this, 0.6));
-        this.goalSelector.addGoal(8, new GirlLookAtPlayerGoal(this, Player.class, 6.0f, 0.05f));
-        this.goalSelector.addGoal(9, new RandomLookAroundGoal(this));
+        this.goalSelector.addGoal(7, new GirlOpenDoorGoal(this, true));
+        this.goalSelector.addGoal(8, new GirlStrollGoal(this, 0.6));
+        this.goalSelector.addGoal(9, new GirlLookAtPlayerGoal(this, Player.class, 6.0f, 0.05f));
+        this.goalSelector.addGoal(10, new RandomLookAroundGoal(this));
     }
 
     // ---- Tick ----
@@ -258,8 +292,16 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
             scene.tick();
             double moved = this.isPassenger() ? 0 : Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
             tickSkills(moved);
-            if (this.isAlive()) needs.tick(moved);
+            if (this.isAlive()) {
+                needs.tick(moved);
+                survival.tick();
+                brain.tick();
+            }
             if (this.tickCount % DANGER_CHECK_INTERVAL == 0) updateDanger();
+            // where she is and how she looks, for her owner's editor
+            if (this.tickCount % 200 == 0 && getOwnerUUID() != null && this.getServer() != null) {
+                OwnedGirls.get(this.getServer()).update(this);
+            }
         } else {
             double moved = Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
             // positions arrive from the server in uneven steps: average over about half a second
@@ -273,7 +315,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         // JUMP stays enabled so FloatGoal keeps her afloat. With her menu open she waits for the player
         boolean busy = getCurrentAction().isBusy();
         Player viewer = menuViewer();
-        boolean waiting = !busy && viewer != null;
+        boolean waiting = !busy && viewer != null && !inDanger && viewer.distanceTo(this) < WAIT_FOR_VIEWER;
         for (Goal.Flag flag : EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK)) {
             if (busy || waiting) this.goalSelector.disableControlFlag(flag);
             else this.goalSelector.enableControlFlag(flag);
@@ -308,18 +350,47 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     // ---- Danger and open menus ----
 
-    /** Hurt a moment ago, burning, or a monster close by. */
+    /** Hunted by monsters, hurt a moment ago, or burning. */
     public boolean isInDanger() {
         return inDanger;
     }
 
     private void updateDanger() {
-        DamageSource lastDamage = this.getLastDamageSource();
-        boolean danger = this.isOnFire() || lastDamage != null && !lastDamage.is(net.minecraft.world.damagesource.DamageTypes.STARVE)
-                || !this.level().getEntitiesOfClass(Monster.class, this.getBoundingBox().inflate(DANGER_RADIUS, 4, DANGER_RADIUS),
-                        m -> m.isAlive() && !m.isSpectator()).isEmpty();
+        boolean hurt = this.tickCount - lastHurtTick < HURT_DANGER_TICKS;
+        boolean danger = this.isOnFire() || hurt || survival.inDanger();
         if (danger && !inDanger) closeMenus(); // the only reason to walk away from a player with her menu open
         inDanger = danger;
+    }
+
+    // ---- Crouching ----
+
+    /**
+     * Crouches like a sneaking player: the game treats her as sneaking (no vibrations for sculk and the warden,
+     * a hidden name tag), she's smaller and much slower.
+     */
+    public void setCrouching(boolean crouching) {
+        if (crouching == this.isShiftKeyDown()) return;
+        this.setShiftKeyDown(crouching);
+        if (!this.isSleeping() && !this.isSwimming() && !this.isDeadOrDying()) this.setPose(crouching ? Pose.CROUCHING : Pose.STANDING);
+        var speed = this.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed == null) return;
+        if (crouching) speed.addOrUpdateTransientModifier(new AttributeModifier(CROUCHING_SPEED, CROUCHING_SLOWDOWN,
+                AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+        else speed.removeModifier(CROUCHING_SPEED);
+    }
+
+    @Override
+    protected @NotNull EntityDimensions getDefaultDimensions(@NotNull Pose pose) {
+        EntityDimensions dimensions = super.getDefaultDimensions(pose);
+        return pose == Pose.CROUCHING ? dimensions.scale(1, CROUCHING_HEIGHT) : dimensions;
+    }
+
+    public SurvivalBrain survival() {
+        return survival;
+    }
+
+    public org.velvetlite.entity.girl.brain.GirlBrain brain() {
+        return brain;
     }
 
     public void addMenuViewer(Player player) {
@@ -404,9 +475,20 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         return GirlSkill.levelFor(getSkillXp(skill));
     }
 
-    /** Open inventory slots: 1 at capacity level 0, 2 more with each level. */
+    /** Open inventory slots at her capacity level: from 1 at level 0 to 27 at the last one. */
     public int getBagCapacity() {
-        return BAG_BASE_SLOTS + BAG_SLOTS_PER_LEVEL * getSkillLevel(GirlSkill.CAPACITY);
+        return bagSlotsAt(getSkillLevel(GirlSkill.CAPACITY));
+    }
+
+    public static int bagSlotsAt(int capacityLevel) {
+        return BAG_SLOTS_AT_LEVEL[Math.clamp(capacityLevel, 0, GirlSkill.MAX_LEVEL)];
+    }
+
+    /** The capacity level that opens inventory slot {@code index}. */
+    public static int levelOpeningSlot(int index) {
+        int level = 0;
+        while (level < GirlSkill.MAX_LEVEL && bagSlotsAt(level) <= index) level++;
+        return level;
     }
 
     /** Server side; applies the level bonuses when a level is reached. */
@@ -493,6 +575,57 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         this.entityData.set(DATA_BONE_TWEAKS, tweaks.toTag());
     }
 
+    @Nullable
+    public org.velvetlite.skin.GirlSkin getSkin() {
+        String skin = this.entityData.get(DATA_SKIN);
+        return skin.isEmpty() ? null : org.velvetlite.skin.GirlSkin.decode(skin);
+    }
+
+    public void setSkin(@Nullable org.velvetlite.skin.GirlSkin skin) {
+        this.entityData.set(DATA_SKIN, skin == null ? "" : skin.encode());
+    }
+
+    /**
+     * How she looks, for the editor's NPC list and its model view when she's far away: model variant, custom
+     * model, bone changes, skin, name and what she wears and holds. Also her health, food and home.
+     */
+    public CompoundTag appearance() {
+        CompoundTag tag = new CompoundTag();
+        tag.putString("name", getCustomNameString());
+        tag.putInt("model_variant", getModelVariant());
+        tag.putString("custom_model", getCustomModelCode());
+        tag.put("bone_tweaks", getBoneTweaks().toTag());
+        tag.putString("skin", this.entityData.get(DATA_SKIN));
+        net.minecraft.nbt.ListTag gear = new net.minecraft.nbt.ListTag();
+        for (EquipmentSlot slot : EquipmentSlot.values()) {
+            if (slot.getType() == EquipmentSlot.Type.ANIMAL_ARMOR) continue;
+            gear.add(getItemBySlot(slot).saveOptional(this.registryAccess()));
+        }
+        tag.put("equipment", gear);
+        tag.putFloat("health", getHealth());
+        tag.putFloat("max_health", getMaxHealth());
+        tag.putInt("food", getFood());
+        if (homePos != null) tag.putLong("home", homePos.asLong());
+        return tag;
+    }
+
+    /** Client side, for a stand-in of her in the editor: takes over how she looks. */
+    public void applyAppearance(CompoundTag tag) {
+        setCustomNameString(tag.getString("name"));
+        setModelVariant(tag.getInt("model_variant"));
+        setCustomModelCode(tag.getString("custom_model"));
+        setBoneTweaks(BoneTweaks.fromTag(tag.getCompound("bone_tweaks")));
+        this.entityData.set(DATA_SKIN, tag.getString("skin"));
+        net.minecraft.nbt.ListTag gear = tag.getList("equipment", Tag.TAG_COMPOUND);
+        int i = 0;
+        for (EquipmentSlot slot : EquipmentSlot.values()) {
+            if (slot.getType() == EquipmentSlot.Type.ANIMAL_ARMOR) continue;
+            if (i < gear.size()) setItemSlot(slot, ItemStack.parseOptional(this.registryAccess(), gear.getCompound(i)));
+            i++;
+        }
+        setFood(tag.getInt("food"));
+    }
+
     public GirlMode getMode() {
         return GirlMode.valueOf(this.entityData.get(DATA_MODE));
     }
@@ -564,8 +697,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         if (owner != null) tag.putString("owner", owner.toString());
         tag.putBoolean("following", isFollowing());
         needs.save(tag);
+        survival.save(tag);
+        brain.save(tag);
         tag.putString("behavior", behavior.toJson());
         tag.put("bone_tweaks", getBoneTweaks().toTag());
+        tag.putString("skin", this.entityData.get(DATA_SKIN));
         // scenes aren't saved: after a reload the partner is gone anyway
         tag.putString("mode", getMode().name());
         tag.putInt("model_variant", getModelVariant());
@@ -590,8 +726,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         // before 1.2 having an owner meant following him
         setFollowing(tag.contains("following") ? tag.getBoolean("following") : tag.contains("owner"));
         needs.load(tag);
+        survival.load(tag);
+        brain.load(tag);
         if (tag.contains("behavior")) behavior = GirlBehavior.fromJsonOrDefault(tag.getString("behavior"));
         if (tag.contains("bone_tweaks")) setBoneTweaks(BoneTweaks.fromTag(tag.getCompound("bone_tweaks")));
+        if (tag.contains("skin")) this.entityData.set(DATA_SKIN, tag.getString("skin"));
         if (tag.contains("mode"))       setMode(GirlMode.valueOf(tag.getString("mode")));
         if (tag.contains("model_variant")) setModelVariant(tag.getInt("model_variant"));
         if (tag.contains("custom_model")) setCustomModelCode(tag.getString("custom_model"));
@@ -638,19 +777,14 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     }
 
     public void openEditor(ServerPlayer player) {
-        if (getCurrentAction().isBusy() || !GirlManager.canEdit(player, this)) return;
-        claimBy(player);
-        String json = behavior.toJson();
-        player.openMenu(new SimpleMenuProvider((id, inv, p) -> new GirlEditorMenu(id, inv, this, json), getName()),
-                buf -> {
-                    buf.writeVarInt(this.getId());
-                    buf.writeUtf(json, GirlBehavior.MAX_LENGTH * 2);
-                });
+        GirlEditorMenu.open(player, this);
     }
 
     /** Every girl belongs to someone: one without an owner (summoned, from older saves) to whoever deals with her first. */
-    private void claimBy(Player player) {
-        if (getOwnerUUID() == null) setOwnerUUID(player.getUUID());
+    public void claimBy(Player player) {
+        if (getOwnerUUID() != null) return;
+        setOwnerUUID(player.getUUID());
+        if (this.getServer() != null) OwnedGirls.get(this.getServer()).update(this);
     }
 
     @Override
@@ -745,6 +879,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
             if (getCurrentAction().isBusy()) scene.stop();
             // starving doesn't toughen her up
             if (this.isAlive() && !source.is(net.minecraft.world.damagesource.DamageTypes.STARVE)) {
+                lastHurtTick = this.tickCount;
                 addSkillXp(GirlSkill.ENDURANCE, Math.max(1, Math.round(amount * 3)));
             }
         }
