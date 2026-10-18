@@ -1,6 +1,23 @@
-# Only the mod is published
-/*
-!/.gitignore
-!/README.md
-!/logo.png
-!/velvet-neoforge-1.21.1/
+# Gradle
+.gradle
+build
+
+# IntelliJ
+out/
+.idea
+*.iml
+.idea_modules/
+
+# OS / JVM
+.DS_Store
+hs_err_pid*
+
+# Dev client working directory
+run
+
+# Tool settings
+.claude
+.proxyai
+
+# Reference material: original mod, Minecraft jar, notes (not part of the project)
+reference/
