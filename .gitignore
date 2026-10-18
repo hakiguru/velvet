@@ -1,5 +1,6 @@
-# Only the lite project is published
+# Only the mod is published
 /*
 !/.gitignore
 !/README.md
-!/velvet-lite-neoforge-1.21.1/
+!/logo.png
+!/velvet-neoforge-1.21.1/
