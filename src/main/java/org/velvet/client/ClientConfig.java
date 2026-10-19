@@ -2,7 +2,7 @@ package org.velvet.client;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/** config/velvet-client.toml */
+/** config/velvet/client.toml */
 public final class ClientConfig {
     private ClientConfig() {}
 

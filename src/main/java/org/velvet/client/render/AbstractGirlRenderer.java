@@ -74,9 +74,14 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
             buffer = softNormals.wrap(buffer, softness,
                     renderingInGui ? SoftNormalVertexConsumer.INVENTORY_LIGHT : SoftNormalVertexConsumer.WORLD_UP);
         }
+        // looked up once for the whole model, not for each bone
+        frameFit = org.velvet.client.scene.SceneFits.active(animatable);
         super.actuallyRender(poseStack, animatable, model, renderType, bufferSource, buffer, isReRender,
                 partialTick, packedLight, packedOverlay, colour);
     }
+
+    /** The scene fit of the girl being drawn, see {@link org.velvet.client.scene.SceneFits}. */
+    @org.jetbrains.annotations.Nullable private java.util.Map<String, BoneTweaks.Tweak> frameFit;
 
     /**
      * Always named, also while the scene partner rides her (GeckoLib hides names of ridden entities); only
@@ -125,6 +130,14 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
                                   int packedOverlay, int colour) {
         BoneTweaks tweaks = girl.clientPreviewTweaks != null ? girl.clientPreviewTweaks : girl.getBoneTweaks();
         BoneTweaks.Tweak t = tweaks.isEmpty() ? null : tweaks.get(bone.getName());
+        // an animation made for another preset turns her body around that preset's body pivot
+        if (bone.getName().equals(BODY_BONE)) {
+            BoneTweaks.Tweak pivot = PivotMatch.body(girl, bone);
+            if (pivot != null) t = combine(t, pivot);
+        }
+        // the scene's fit to her preset, on top
+        BoneTweaks.Tweak f = frameFit == null ? null : frameFit.get(bone.getName());
+        if (f != null && f.movesBone()) t = combine(t, f);
         if (t != null && t.tint != BoneTweaks.NO_TINT) colour = FastColor.ARGB32.multiply(colour, t.tint);
         if (bone.getName().equals(girl.clientSelectedBone)) colour = FastColor.ARGB32.multiply(colour, SELECTED_TINT);
         if (ModelPicker.active != null) parentPoses.put(bone, new Matrix4f(poseStack.last().pose()));
@@ -176,6 +189,19 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
             bone.setHidden(hidden);
             bone.setChildrenHidden(childrenHidden);
         }
+    }
+
+    private static final String BODY_BONE = "body";
+
+    /** A bone change with another on top: scales multiply, offsets and turns add up; tint and hiding stay the first's. */
+    private static BoneTweaks.Tweak combine(@org.jetbrains.annotations.Nullable BoneTweaks.Tweak base, BoneTweaks.Tweak more) {
+        BoneTweaks.Tweak out = base == null ? BoneTweaks.Tweak.identity() : base.copy();
+        for (int i = 0; i < 3; i++) {
+            out.scale[i] *= more.scale[i];
+            out.offset[i] += more.offset[i];
+            out.rotation[i] += more.rotation[i];
+        }
+        return out;
     }
 
     /** Sneaking with the player-like pose drawn over her movement (presets with a crouch animation play that instead). */
@@ -252,6 +278,14 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
         font.drawInBatch(name, x, 0, 0x20FFFFFF, false, pose, bufferSource, Font.DisplayMode.SEE_THROUGH, background, packedLight);
         font.drawInBatch(name, x, 0, 0xFFFFFFFF, false, pose, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
         poseStack.popPose();
+    }
+
+    /** Presets with see-through parts (the slime's body and dress) are blended, the others cut out. */
+    @Override
+    public RenderType getRenderType(T girl, net.minecraft.resources.ResourceLocation texture,
+                                    @org.jetbrains.annotations.Nullable MultiBufferSource bufferSource, float partialTick) {
+        return girl.getGirlType().translucent() ? RenderType.entityTranslucent(texture)
+                : super.getRenderType(girl, texture, bufferSource, partialTick);
     }
 
     @Override

@@ -18,17 +18,16 @@ import static org.velvet.client.gui.PanelArt.*;
 
 /**
  * The debug tool's own tabs (creative only), all kept in her settings file
- * ({@code <world>/velvet/npcs/<id>.json}) or on her:
+ * ({@code config/velvet/npcs/<id>.json}) or on her (her character has a tab of its own, {@link PersonalityTab}):
  * <ul>
  *   <li>INSTINCT: each part of her survival instinct on or off.</li>
- *   <li>CHARACTER: her character, to come.</li>
  *   <li>LEVELS: the skill levels she has (starting levels for a new one).</li>
  *   <li>FLAGS: AI off (she stands like a mob without AI), damage from players, invulnerable.</li>
  * </ul>
  */
 public final class DebugTab implements EditorTab {
 
-    public enum Page { INSTINCT, CHARACTER, LEVELS, FLAGS }
+    public enum Page { INSTINCT, LEVELS, FLAGS }
 
     private record Toggle(String key, BooleanSupplier get, Consumer<Boolean> set) {}
 
@@ -71,7 +70,6 @@ public final class DebugTab implements EditorTab {
                     new Toggle("damage_from_players", () -> settings().damageFromPlayers, v -> settings().damageFromPlayers = v),
                     new Toggle("invulnerable", () -> settings().invulnerable, v -> settings().invulnerable = v)));
             case LEVELS -> levels();
-            case CHARACTER -> {}
         }
     }
 
@@ -112,13 +110,6 @@ public final class DebugTab implements EditorTab {
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         g.drawString(font, Component.translatable("editor.velvet.debug.page." + page.name().toLowerCase()), x, y + 1, LABEL, false);
-        if (page == Page.CHARACTER) {
-            int ly = y + 16;
-            for (var line : font.split(Component.translatable("editor.velvet.debug.character.soon"), w)) {
-                g.drawString(font, line, x, ly, MUTED, false);
-                ly += 10;
-            }
-        }
         Component file = Component.translatable("editor.velvet.debug.file");
         g.drawString(font, font.plainSubstrByWidth(file.getString(), w), x, y + h - 9, 0xFF8A8A8A, false);
     }

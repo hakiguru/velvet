@@ -35,10 +35,17 @@ public final class OwnedGirls extends SavedData {
                         CompoundTag appearance, long created) {}
 
     private final Map<UUID, Entry> girls = new LinkedHashMap<>();
+    /** Deleted with the debug tool while far away: gone as soon as her chunk loads. */
+    private final java.util.Set<UUID> deleted = new java.util.HashSet<>();
 
     public static OwnedGirls get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(
                 new SavedData.Factory<>(OwnedGirls::new, OwnedGirls::load, null), NAME);
+    }
+
+    /** Every player's girls. */
+    public java.util.Collection<Entry> all() {
+        return girls.values();
     }
 
     /** Oldest first, as they joined the player. */
@@ -67,12 +74,25 @@ public final class OwnedGirls extends SavedData {
         if (girls.remove(girl) != null) setDirty();
     }
 
+    /** Deletes her for good, also if she's in a chunk that isn't loaded right now. */
+    public void delete(UUID girl) {
+        remove(girl);
+        deleted.add(girl);
+        setDirty();
+    }
+
     // ---- Keeping it up to date ----
 
     @SubscribeEvent
     public static void onJoin(EntityJoinLevelEvent event) {
         if (event.getEntity() instanceof AbstractGirlEntity girl && !event.getLevel().isClientSide() && girl.getServer() != null) {
-            get(girl.getServer()).update(girl);
+            OwnedGirls owned = get(girl.getServer());
+            if (owned.deleted.remove(girl.getGirlUUID())) {
+                owned.setDirty();
+                event.setCanceled(true);
+                return;
+            }
+            owned.update(girl);
         }
     }
 
@@ -88,7 +108,11 @@ public final class OwnedGirls extends SavedData {
 
     private static OwnedGirls load(CompoundTag tag, HolderLookup.Provider registries) {
         OwnedGirls data = new OwnedGirls();
+        for (net.minecraft.nbt.Tag d : tag.getList("_deleted", net.minecraft.nbt.Tag.TAG_INT_ARRAY)) {
+            data.deleted.add(net.minecraft.nbt.NbtUtils.loadUUID(d));
+        }
         for (String key : tag.getAllKeys()) {
+            if (key.equals("_deleted")) continue;
             CompoundTag t = tag.getCompound(key);
             try {
                 UUID id = UUID.fromString(key);
@@ -115,6 +139,9 @@ public final class OwnedGirls extends SavedData {
             t.putLong("created", e.created());
             tag.put(id.toString(), t);
         });
+        net.minecraft.nbt.ListTag gone = new net.minecraft.nbt.ListTag();
+        for (UUID id : deleted) gone.add(net.minecraft.nbt.NbtUtils.createUUID(id));
+        if (!gone.isEmpty()) tag.put("_deleted", gone);
         return tag;
     }
 }

@@ -79,7 +79,8 @@ public final class Threats {
     private static final double WARDEN_HEARING = 20;
     private static final int FORGET_AFTER = 200;
     private static final int FORGET_APEX_AFTER = 600;
-    private static final int SCAN_INTERVAL = 5;
+    /** How often she looks around: a few times a second, every tick under adrenaline. */
+    private static final int SCAN_INTERVAL = 3;
 
     private final AbstractGirlEntity girl;
     private final Map<Integer, Threat> known = new HashMap<>();
@@ -92,17 +93,21 @@ public final class Threats {
     public void tick() {
         long now = girl.level().getGameTime();
         watchAttacks(now);
-        if (girl.tickCount % SCAN_INTERVAL != 0) return;
+        boolean alert = girl.psyche().adrenaline() >= 0.3F;
+        if (!alert && girl.tickCount % SCAN_INTERVAL != 0) return;
+        // adrenaline sharpens her senses: she sees and hears further
+        double senses = girl.psyche().senseRange();
+        double sight = SIGHT * senses, hearing = HEARING * senses, farScan = FAR_SCAN_RADIUS * senses;
         Vec3 pos = girl.position();
-        AABB far = girl.getBoundingBox().inflate(FAR_SCAN_RADIUS, 20, FAR_SCAN_RADIUS);
+        AABB far = girl.getBoundingBox().inflate(farScan, 20 * senses, farScan);
         for (LivingEntity e : girl.level().getEntitiesOfClass(LivingEntity.class, far, e -> e != girl && e.isAlive())) {
             boolean hunting = isHunting(e);
             boolean warden = e instanceof Warden;
             if (!(hunting || warden || isHostile(e))) continue;
             double dist = e.distanceTo(girl);
             Threat t = known.get(e.getId());
-            boolean visible = dist <= SIGHT && girl.hasLineOfSight(e);
-            boolean heard = dist <= HEARING || warden && dist <= WARDEN_HEARING;
+            boolean visible = dist <= sight && girl.hasLineOfSight(e);
+            boolean heard = dist <= hearing || warden && dist <= WARDEN_HEARING * senses;
             // what she can't see or hear she doesn't know about, unless she knew before
             if (t == null && !visible && !heard && !(hunting && dist <= 16)) continue;
             if (t == null) {
@@ -127,7 +132,7 @@ public final class Threats {
         }
         known.values().removeIf(t -> !t.entity.isAlive() || t.entity.isRemoved() || t.entity.level() != girl.level()
                 || now - t.lastSeen > (t.kind == Kind.APEX ? FORGET_APEX_AFTER : FORGET_AFTER)
-                || t.kind == Kind.APEX && !t.hunting && t.distanceTo(pos) > FAR_SCAN_RADIUS);
+                || t.kind == Kind.APEX && !t.hunting && t.distanceTo(pos) > farScan);
         List<Threat> list = new ArrayList<>(known.values());
         for (Threat t : list) t.danger = danger(t, pos);
         list.sort((a, b) -> Double.compare(b.danger, a.danger));

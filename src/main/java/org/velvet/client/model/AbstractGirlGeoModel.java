@@ -43,12 +43,20 @@ public class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends GeoModel
 
     // per preset, index = model variant (0 nude, 1 dressed, 2 armored); resolved lazily because
     // GeckoLib bakes models after the renderer is created
-    private final java.util.Map<GirlType, ResourceLocation[]> models = new java.util.EnumMap<>(GirlType.class);
+    private final java.util.Map<GirlType, ResourceLocation[]> models = new java.util.IdentityHashMap<>();
 
     @Override
     public ResourceLocation getModelResource(T girl) {
         GirlType type = girl.getGirlType();
         int variant = Math.clamp(girl.getModelVariant(), 0, 2);
+        if (type.isCustom()) {
+            // its own model if it has one (and a dressed one too), else its base preset's
+            org.velvet.client.preset.PresetCache.ensureBaked(type);
+            boolean own = org.velvet.client.preset.PresetCache.has(type, org.velvet.preset.PresetFiles.MODEL);
+            if (!own) type = type.base();
+            else return variant > 0 && org.velvet.client.preset.PresetCache.has(type, org.velvet.preset.PresetFiles.DRESSED)
+                    ? type.geo("dressed") : type.geo(type.id());
+        }
         ResourceLocation[] variants = models.computeIfAbsent(type, t -> new ResourceLocation[3]);
         if (variants[variant] == null) variants[variant] = resolveModel(type, variant);
         return variants[variant];
@@ -57,19 +65,18 @@ public class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends GeoModel
     // Variant files are named inconsistently (bia_dressed vs dressed) and some presets
     // have no dressed/armored model at all, so fall back to the base model.
     private static ResourceLocation resolveModel(GirlType type, int variant) {
-        String folder = type.assetFolder();
-        String base = type.id();
+        String base = type.baseModelName();
         String[] candidates = switch (variant) {
             case 1  -> new String[]{base + "_dressed", "dressed", base};
             case 2  -> new String[]{base + "_armored", "armored", base + "_dressed", "dressed", base};
             default -> new String[]{base};
         };
         for (String name : candidates) {
-            ResourceLocation rl = loc("geo/" + folder + "/" + name + ".geo.json");
+            ResourceLocation rl = type.geo(name);
             if (GeckoLibCache.getBakedModels().containsKey(rl)) return rl;
         }
         Velvet.LOGGER.error("No geo model found for {} (variant {})", type.id(), variant);
-        return loc("geo/" + folder + "/" + base + ".geo.json");
+        return type.geo(base);
     }
 
     /** Her own texture, or a custom skin from the editor that replaces it (once it has arrived). */
@@ -83,16 +90,41 @@ public class AbstractGirlGeoModel<T extends AbstractGirlEntity> extends GeoModel
         return defaultTexture(girl.getGirlType());
     }
 
+
     /** The texture that comes with a preset, to export as a starting point for a skin. */
     public static ResourceLocation defaultTexture(GirlType type) {
-        String folder = type.assetFolder();
-        return loc("textures/entity/" + folder + "/" + folder + ".png");
+        if (type.isCustom()) {
+            org.velvet.client.preset.PresetCache.ensureBaked(type);
+            if (!org.velvet.client.preset.PresetCache.has(type, org.velvet.preset.PresetFiles.TEXTURE)) return type.base().texture();
+        }
+        return type.texture();
     }
 
     @Override
     public ResourceLocation getAnimationResource(T girl) {
-        String folder = girl.getGirlType().assetFolder();
-        return loc("animations/" + folder + "/" + folder + ".animation.json");
+        GirlType type = girl.getGirlType();
+        if (type.isCustom() && !org.velvet.client.preset.PresetCache.has(type, org.velvet.preset.PresetFiles.ANIMATIONS)) {
+            return type.base().animations();
+        }
+        return type.animations();
+    }
+
+    /** A custom preset's own animations, and its base preset's for whatever it doesn't have. */
+    @Override
+    public ResourceLocation[] getAnimationResourceFallbacks(T girl) {
+        GirlType type = girl.getGirlType();
+        return type.isCustom() ? new ResourceLocation[]{type.base().animations()} : super.getAnimationResourceFallbacks(girl);
+    }
+
+    /**
+     * Scenes and poses are shared by every preset: an animation named "animation.<preset>.<name>" comes
+     * from that preset's file, whichever model plays it (they all have the same skeleton).
+     */
+    @Override
+    public software.bernie.geckolib.animation.Animation getAnimation(T girl, String name) {
+        software.bernie.geckolib.animation.Animation own = super.getAnimation(girl, name);
+        if (own != null) return own;
+        return org.velvet.client.animation.GirlAnimationController.sharedAnimation(name);
     }
 
     @Override

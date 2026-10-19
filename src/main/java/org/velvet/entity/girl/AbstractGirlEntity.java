@@ -42,6 +42,7 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.velvet.Velvet;
+import org.velvet.entity.girl.psyche.Psyche;
 import org.velvet.entity.girl.ai.GirlFollowGoal;
 import org.velvet.entity.girl.ai.GirlGoHomeGoal;
 import org.velvet.entity.girl.ai.GirlLookAtPlayerGoal;
@@ -110,6 +111,16 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     private static final EntityDataAccessor<String> DATA_PRESET =
             SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.STRING);
 
+    /** Her emotions in tenths, 4 bits each (see {@link Psyche#packEmotions}). */
+    private static final EntityDataAccessor<Integer> DATA_EMOTIONS =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.INT);
+    /** Adrenaline in tenths. */
+    private static final EntityDataAccessor<Byte> DATA_ADRENALINE =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.BYTE);
+    /** How she shows a strong emotion right now ({@link Psyche.Emote}). */
+    private static final EntityDataAccessor<Byte> DATA_EMOTE =
+            SynchedEntityData.defineId(AbstractGirlEntity.class, EntityDataSerializers.BYTE);
+
     private static final EntityDataAccessor<Integer>[] DATA_SKILL_XP = defineSkillData();
 
     @SuppressWarnings("unchecked")
@@ -148,6 +159,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     /** She only waits for a player with her menu or editor open within this distance. */
     private static final double WAIT_FOR_VIEWER = 16;
     private static final ResourceLocation CROUCHING_SPEED = ResourceLocation.fromNamespaceAndPath(Velvet.MODID, "crouching");
+    private static final ResourceLocation ADRENALINE_SPEED = ResourceLocation.fromNamespaceAndPath(Velvet.MODID, "adrenaline");
     /**
      * Like a sneaking player: about a third of her walking pace. A mob's ground speed grows with the square
      * of its speed attribute, so 0.7 of it gives about half of the pace, and sneaking she goes at a slow walk
@@ -167,6 +179,8 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     private final GirlNeeds needs = new GirlNeeds(this);
     private final SurvivalBrain survival = new SurvivalBrain(this);
     private final org.velvet.entity.girl.brain.GirlBrain brain = new org.velvet.entity.girl.brain.GirlBrain(this);
+    /** Server: her character, emotions and adrenaline. */
+    private final Psyche psyche = new Psyche(this);
     private GirlBehavior behavior = new GirlBehavior();
     /** Server: her instincts and debug switches, from her own file (see {@link NpcSettings}). */
     private NpcSettings settings = new NpcSettings();
@@ -182,6 +196,13 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     @Nullable public BoneTweaks clientPreviewTweaks;
     /** Client only: an animation the editor plays on its stand-in of her ("walk", "sit"...), instead of her own. */
     @Nullable public String clientPreviewAnimation;
+    /**
+     * Client only: the scene the editor fits to her (model tab, "Scene"): its fit is drawn and the partner shows
+     * (with the player's skin), playing whatever pose the editor picked.
+     */
+    @Nullable public org.velvet.entity.girl.scene.SceneType clientPreviewScene;
+    /** Client only: when her last swing started (her tick) and how many there were, for the attack animations. */
+    public int clientSwingAt = -100, clientSwings;
     /** Client only: the bone picked in the editor, drawn tinted. */
     @Nullable public String clientSelectedBone;
     /**
@@ -261,12 +282,17 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         builder.define(DATA_BONE_TWEAKS,     new CompoundTag());
         builder.define(DATA_SKIN,            "");
         builder.define(DATA_PRESET,          "");
+        builder.define(DATA_EMOTIONS,        0);
+        builder.define(DATA_ADRENALINE,      (byte) 0);
+        builder.define(DATA_EMOTE,           (byte) 0);
         for (EntityDataAccessor<Integer> skill : DATA_SKILL_XP) builder.define(skill, 0);
     }
 
     @Override
     protected void registerGoals() {
         // what to do about danger is up to her survival brain; these carry it out
+        // out of lava (or water she's stuck in) before anything else, swimming included
+        this.goalSelector.addGoal(0, new org.velvet.entity.girl.ai.GirlEscapeFluidGoal(this));
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(1, new GirlDigInGoal(this));
         this.goalSelector.addGoal(1, new GirlPillarGoal(this));
@@ -308,9 +334,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
                 needs.tick(moved);
                 // with her AI switched off (debug tool) she only stands there
                 if (settings.ai) {
+                    psyche.tick();
                     survival.tick();
                     brain.tick();
                 }
+                if (this.tickCount % Psyche.UPDATE_INTERVAL == 0) syncPsyche();
             }
             if (this.tickCount % DANGER_CHECK_INTERVAL == 0) updateDanger();
             // where she is and how she looks, for her owner's editor
@@ -321,6 +349,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
             double moved = Math.sqrt(Mth.square(getX() - xo) + Mth.square(getZ() - zo));
             // positions arrive from the server in uneven steps: average over about half a second
             clientGroundSpeed += (moved - clientGroundSpeed) * 0.15;
+            org.velvet.client.EmoteEffects.tick(this);
         }
     }
 
@@ -406,7 +435,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     /** Like a player eating: the food goes into her, on top of the sound and effects. */
     @Override
     public @NotNull ItemStack eat(@NotNull Level level, @NotNull ItemStack food, @NotNull net.minecraft.world.food.FoodProperties props) {
-        if (!level.isClientSide) needs.feed(props);
+        if (!level.isClientSide) {
+            needs.feed(props);
+            psyche.onAte(food);
+        }
         return super.eat(level, food, props);
     }
 
@@ -463,6 +495,37 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
 
     public SurvivalBrain survival() {
         return survival;
+    }
+
+    public Psyche psyche() {
+        return psyche;
+    }
+
+    private void syncPsyche() {
+        // the rush: she's quicker on her feet the more adrenaline she has
+        var speed = this.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null) {
+            if (psyche.adrenaline() > 0.05F) speed.addOrUpdateTransientModifier(new AttributeModifier(ADRENALINE_SPEED,
+                    0.15 * psyche.adrenaline(), AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            else speed.removeModifier(ADRENALINE_SPEED);
+        }
+        this.entityData.set(DATA_EMOTIONS, psyche.packEmotions());
+        this.entityData.set(DATA_ADRENALINE, (byte) Math.round(psyche.adrenaline() * 10));
+        this.entityData.set(DATA_EMOTE, (byte) psyche.emote().ordinal());
+    }
+
+    /** Her emotion in tenths, on both sides (synced). */
+    public float getEmotion(org.velvet.entity.girl.psyche.Emotion e) {
+        return Psyche.unpack(this.entityData.get(DATA_EMOTIONS), e);
+    }
+
+    public float getAdrenaline() {
+        return this.entityData.get(DATA_ADRENALINE) / 10.0F;
+    }
+
+    public Psyche.Emote getEmote() {
+        int i = this.entityData.get(DATA_EMOTE);
+        return i >= 0 && i < Psyche.Emote.values().length ? Psyche.Emote.values()[i] : Psyche.Emote.NONE;
     }
 
     public org.velvet.entity.girl.brain.GirlBrain brain() {
@@ -573,7 +636,10 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         int before = getSkillLevel(skill);
         int cap = GirlSkill.xpForLevel(GirlSkill.MAX_LEVEL);
         this.entityData.set(DATA_SKILL_XP[skill.ordinal()], Math.min(cap, getSkillXp(skill) + amount));
-        if (getSkillLevel(skill) != before) applySkillBonuses();
+        if (getSkillLevel(skill) != before) {
+            applySkillBonuses();
+            psyche.onLevelUp();
+        }
     }
 
     /** Sets the skill to the start of {@code level} (the debug tool's starting levels). */
@@ -651,22 +717,62 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         this.settings = settings;
         settingsLoaded = true;
         applySettings();
-        if (this.getServer() != null) settings.write(this.getServer(), getGirlUUID());
+        writeSettings();
+    }
+
+    /** Her settings file, with what else the debug editor sets copied in (name, levels, character). */
+    public void writeSettings() {
+        if (this.getServer() == null) return;
+        settings.name = getCustomNameString();
+        settings.preset = getGirlType().id();
+        for (GirlSkill skill : GirlSkill.values()) settings.levels[skill.ordinal()] = getSkillLevel(skill);
+        settings.personality = psyche.personality().toJson();
+        settings.write(this.getServer(), getGirlUUID());
     }
 
     /** Her file, read once she's in the world (her id is known by then); written if she has none yet. */
     private void loadSettings() {
         settingsLoaded = true;
         if (this.getServer() == null) return;
+        // every NPC has a name of her own
+        if (getCustomNameString().isBlank() && getGirlType() != GirlType.UNKNOWN) {
+            setCustomNameString(Names.freeName(this.getServer(), getGirlType(), getGirlUUID()));
+        }
         NpcSettings file = NpcSettings.read(this.getServer(), getGirlUUID());
         if (file != null) {
             settings = file;
-        } else {
-            if (behavior.legacySurvival != null) settings.readSurvival(behavior.legacySurvival);
-            settings.write(this.getServer(), getGirlUUID());
+        } else if (behavior.legacySurvival != null) {
+            settings.readSurvival(behavior.legacySurvival);
         }
         behavior.legacySurvival = null;
         applySettings();
+        // her character and how she felt: from her personality file if there is one (it may have been
+        // edited by hand), else she keeps what was saved with her or what she was born with
+        com.google.gson.JsonObject mind = org.velvet.entity.girl.psyche.PsycheStore.read(getGirlUUID());
+        if (mind != null) psyche.readJson(mind);
+        else org.velvet.entity.girl.psyche.PsycheStore.write(getGirlUUID(), psyche);
+        if (file != null) {
+            // levels changed by hand in her settings file
+            for (GirlSkill skill : GirlSkill.values()) {
+                int level = file.levels[skill.ordinal()];
+                if (level >= 0 && level != getSkillLevel(skill)) setSkillLevel(skill, level);
+            }
+            // and her character, when that file was changed after her personality file
+            if (file.personality != null && newer(NpcSettings.file(this.getServer(), getGirlUUID()),
+                    org.velvet.VelvetPaths.personality(getGirlUUID()))) {
+                psyche.setPersonality(org.velvet.entity.girl.psyche.Personality.fromJson(file.personality, getRandom()));
+                org.velvet.entity.girl.psyche.PsycheStore.write(getGirlUUID(), psyche);
+            }
+        }
+        writeSettings();
+    }
+
+    private static boolean newer(java.nio.file.Path a, java.nio.file.Path b) {
+        try {
+            return java.nio.file.Files.getLastModifiedTime(a).compareTo(java.nio.file.Files.getLastModifiedTime(b)) > 0;
+        } catch (java.io.IOException e) {
+            return false;
+        }
     }
 
     private void applySettings() {
@@ -833,6 +939,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         needs.save(tag);
         survival.save(tag);
         brain.save(tag);
+        psyche.save(tag);
+        if (!this.level().isClientSide && settingsLoaded) {
+            org.velvet.entity.girl.psyche.PsycheStore.write(getGirlUUID(), psyche);
+            writeSettings();
+        }
         tag.putString("behavior", behavior.toJson());
         tag.put("bone_tweaks", getBoneTweaks().toTag());
         tag.putString("skin", this.entityData.get(DATA_SKIN));
@@ -864,6 +975,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         needs.load(tag);
         survival.load(tag);
         brain.load(tag);
+        psyche.load(tag);
         if (tag.contains("behavior")) behavior = GirlBehavior.fromJsonOrDefault(tag.getString("behavior"));
         if (tag.contains("bone_tweaks")) setBoneTweaks(BoneTweaks.fromTag(tag.getCompound("bone_tweaks")));
         if (tag.contains("skin")) this.entityData.set(DATA_SKIN, tag.getString("skin"));
@@ -909,6 +1021,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     public void openMenu(ServerPlayer player) {
         if (getCurrentAction().isBusy() || !GirlManager.canCommand(player, this)) return;
         claimBy(player);
+        psyche.attention(player.getUUID().equals(getOwnerUUID()));
         player.openMenu(new SimpleMenuProvider((id, inv, p) -> new GirlMenu(id, inv, this), getName()),
                 buf -> buf.writeVarInt(this.getId()));
     }
@@ -1013,6 +1126,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         boolean hurt = super.hurt(source, amount);
         if (hurt && !this.level().isClientSide) {
             if (getCurrentAction().isBusy()) scene.stop();
+            if (!source.is(net.minecraft.world.damagesource.DamageTypes.STARVE)) psyche.onHurt(source, amount);
             // starving doesn't toughen her up
             if (this.isAlive() && !source.is(net.minecraft.world.damagesource.DamageTypes.STARVE)) {
                 lastHurtTick = this.tickCount;
@@ -1020,6 +1134,13 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
             }
         }
         return hurt;
+    }
+
+    /** Something she killed: a victory to be glad about, once it's safe. */
+    @Override
+    public boolean killedEntity(@NotNull ServerLevel level, @NotNull LivingEntity victim) {
+        psyche.onKill(victim);
+        return super.killedEntity(level, victim);
     }
 
     @Override
@@ -1035,9 +1156,11 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         controllers.add(new org.velvet.client.animation.GaitAnimationController(
                 this, "movement", 5, org.velvet.client.animation.GirlAnimationController::movementPredicate)
                 .setSoundKeyframeHandler(org.velvet.client.animation.GirlAnimationController::ignoreKeyframe));
-        controllers.add(new AnimationController<>(
+        controllers.add(new org.velvet.client.animation.ScrubAnimationController(
                 this, "action", 2, org.velvet.client.animation.GirlAnimationController::actionPredicate)
                 .setSoundKeyframeHandler(org.velvet.client.animation.GirlAnimationController::onSoundKeyframe));
+        controllers.add(new AnimationController<>(
+                this, "emote", 8, org.velvet.client.animation.GirlAnimationController::emotePredicate));
     }
 
     @Override
@@ -1071,7 +1194,6 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     }
 
     public ResourceLocation getTextureLocation() {
-        String folder = getGirlType().assetFolder();
-        return ResourceLocation.fromNamespaceAndPath(Velvet.MODID, "textures/entity/" + folder + "/" + folder + ".png");
+        return getGirlType().texture();
     }
 }

@@ -18,9 +18,9 @@ import org.velvet.network.NetworkHandler;
 import org.velvet.network.packet.CopyToClipboardPacket;
 
 /**
- * Right click: the NPC editor. On a girl it opens on her (only for her owner, or an operator); anywhere else
- * on the girl edited last, with all of the player's girls as tabs. Sneaking on a girl copies her custom model
- * code, as before.
+ * The NPC Editor: used on an NPC (hers or, for an operator, anyone's) it opens the editor on her, and only her,
+ * and breaks right away; it's good for one go. Sneaking on her copies her custom model code instead, which
+ * doesn't use it up. Every NPC at once, and more, is the debug tool's editor.
  */
 public class NpcEditorWandItem extends Item {
 
@@ -43,8 +43,15 @@ public class NpcEditorWandItem extends Item {
         } else if (!GirlManager.canEdit(player, girl)) {
             player.displayClientMessage(Component.translatable("editor.velvet.not_yours", girl.getName())
                     .withStyle(ChatFormatting.RED), true);
-        } else {
-            girl.openEditor(serverPlayer);
+        } else if (GirlEditorMenu.open(serverPlayer, girl, false)) {
+            // one use: it breaks in his hand
+            player.level().playSound(null, player.getX(), player.getY(), player.getZ(),
+                    net.minecraft.sounds.SoundEvents.ITEM_BREAK, net.minecraft.sounds.SoundSource.PLAYERS, 0.8F, 1.0F);
+            if (player.level() instanceof net.minecraft.server.level.ServerLevel server) {
+                server.sendParticles(new net.minecraft.core.particles.ItemParticleOption(net.minecraft.core.particles.ParticleTypes.ITEM, stack),
+                        player.getX(), player.getEyeY() - 0.2, player.getZ(), 10, 0.15, 0.1, 0.15, 0.05);
+            }
+            stack.shrink(1);
         }
         return InteractionResult.SUCCESS;
     }
@@ -52,7 +59,9 @@ public class NpcEditorWandItem extends Item {
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
-        if (player instanceof ServerPlayer serverPlayer) GirlEditorMenu.open(serverPlayer, null);
-        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+        if (!level.isClientSide) {
+            player.displayClientMessage(Component.translatable("editor.velvet.wand.use_on_npc").withStyle(ChatFormatting.GRAY), true);
+        }
+        return InteractionResultHolder.pass(stack);
     }
 }

@@ -46,15 +46,26 @@ import static org.velvet.client.gui.PanelArt.*;
  * to move it, wheel to zoom; drag the coloured handles to move, turn or scale the picked bone with the tool
  * chosen in the toolbar or with G, R and S), poses to try on the right of the view, and the picked bone's
  * numbers, colour and her texture on the far right. Ctrl+Z / Ctrl+Y undo and redo.
+ * <p>
+ * The "Scene" section fits the scenes to her preset (see {@link org.velvet.client.scene.SceneFits}): pick a
+ * scene and one of its poses, and she plays it with you as the partner; then move, turn or scale her, him or
+ * his cock until they meet. Fits are per preset, not per NPC, and kept in config/velvet/scene_fits.json.
  */
 public final class ModelTab implements EditorTab {
 
     private enum Tool { MOVE, ROTATE, SCALE }
 
-    private enum Section { TRANSFORM, COLOR, TEXTURE }
+    private enum Section { TRANSFORM, COLOR, TEXTURE, SCENE }
 
-    /** Poses to try on, with the animation each one plays ("" for her standing idle). */
-    private record Pose(String key, String animation) {}
+    /**
+     * Poses to try on, with the animation each one plays (its full name, "" for her standing idle); a header
+     * row names the preset the poses under it come from.
+     */
+    private record Pose(String key, String animation, boolean header) {
+        Pose(String key, String animation) {
+            this(key, animation, false);
+        }
+    }
 
     /** The usual ones first, in this order, with names of their own; the rest of her preset's after them. */
     private static final List<String> KNOWN = List.of("walk", "fastwalk", "run", "backwards_walk", "crouchwalk", "crouchidle",
@@ -123,6 +134,14 @@ public final class ModelTab implements EditorTab {
     private int fileScroll;
     @Nullable private Component textureStatus;
     private int textureStatusColour = MUTED;
+    // scene fitting
+    private final List<AbstractWidget> sceneWidgets = new ArrayList<>();
+    private final List<RangeSlider> fitSliders = new ArrayList<>();
+    private Button sceneButton, stageButton;
+    private final List<Button> fitBoneButtons = new ArrayList<>();
+    private int sceneIndex, stageIndex;
+    private String fitBone = "body";
+    private boolean fitsChanged;
     /** While the widgets are being set to the state: their callbacks mustn't count as edits. */
     private boolean syncing;
 
@@ -139,6 +158,9 @@ public final class ModelTab implements EditorTab {
         textureWidgets.clear();
         selectionWidgets.clear();
         sliders.clear();
+        sceneWidgets.clear();
+        fitSliders.clear();
+        fitBoneButtons.clear();
         toolButtons.clear();
         if (order.isEmpty() || bonesOf != host.state().preset) collectBones();
         int propsW = propsW();
@@ -192,14 +214,15 @@ public final class ModelTab implements EditorTab {
         }
 
         // properties
-        int px = x + w - propsW, py = y + TOOLBAR + 14;
+        int px = x + w - propsW, py = y + TOOLBAR + 26;
         int sw = propsW;
-        String[] names = {"transform", "color", "texture"};
-        for (int i = 0; i < 3; i++) {
+        // the sections, two by two
+        String[] names = {"transform", "color", "texture", "scene"};
+        for (int i = 0; i < 4; i++) {
             Section s = Section.values()[i];
-            int bw = (sw - 2) / 3;
+            int bw = (sw - 1) / 2;
             host.add(Button.builder(Component.translatable("editor.velvet.section." + names[i]), b -> showSection(s))
-                    .bounds(px + i * (bw + 1), y + TOOLBAR, bw, 13).build());
+                    .bounds(px + i % 2 * (bw + 1), y + TOOLBAR + i / 2 * 12, bw, 12).build());
         }
         int bottom = y + h;
         int step = Mth.clamp((bottom - py - 32) / 9, 11, 15);
@@ -250,8 +273,157 @@ public final class ModelTab implements EditorTab {
         textureWidgets.add(host.add(Button.builder(Component.translatable("editor.velvet.skin.export"), b -> exportDefault())
                 .bounds(px + half + 2, py + 36, half, 16).build()));
 
+        initScene(px, py, sw, step);
         refreshFiles();
         syncWidgets();
+    }
+
+    // ---- Scene fitting ----
+
+    private void initScene(int px, int py, int sw, int step) {
+        int row = Math.max(12, step);
+        sceneWidgets.add(host.add(Button.builder(Component.literal("◀"), b -> pickScene(-1)).bounds(px, py, 14, row - 1).build()));
+        sceneButton = host.add(Button.builder(Component.empty(), b -> pickScene(1)).bounds(px + 15, py, sw - 30, row - 1).build());
+        sceneWidgets.add(sceneButton);
+        sceneWidgets.add(host.add(Button.builder(Component.literal("▶"), b -> pickScene(1)).bounds(px + sw - 14, py, 14, row - 1).build()));
+        stageButton = host.add(Button.builder(Component.empty(), b -> pickStage(1)).bounds(px, py + row, sw, row - 1).build());
+        sceneWidgets.add(stageButton);
+        int bw = (sw - 2) / 3;
+        for (int i = 0; i < org.velvet.client.scene.SceneFits.BONES.size(); i++) {
+            String bone = org.velvet.client.scene.SceneFits.BONES.get(i);
+            Button b = host.add(Button.builder(Component.translatable("editor.velvet.fit.bone." + bone), btn -> {
+                fitBone = bone;
+                syncWidgets();
+            }).bounds(px + i * (bw + 1), py + 2 * row, bw, row - 1).build());
+            fitBoneButtons.add(b);
+            sceneWidgets.add(b);
+        }
+        String[] kinds = {"scale", "offset", "rotation"};
+        String[] axes = {"X", "Y", "Z"};
+        int sy = py + 3 * row + 2;
+        int sliderStep = Math.max(10, Math.min(step, (y + h - sy - 2 * 14) / 9));
+        for (int k = 0; k < 3; k++) {
+            for (int a = 0; a < 3; a++) {
+                int kind = k, axis = a;
+                double min = kind == 0 ? 0.5 : kind == 1 ? -24 : -180;
+                double max = kind == 0 ? 2 : kind == 1 ? 24 : 180;
+                double stepSize = kind == 0 ? 0.02 : kind == 1 ? 0.25 : 1;
+                RangeSlider slider = host.add(new RangeSlider(px, sy + (k * 3 + a) * sliderStep, sw, sliderStep - 1, min, max, stepSize,
+                        () -> fitValue(kind, axis), v -> setFitValue(kind, axis, (float) v),
+                        v -> Component.translatable("editor.velvet." + kinds[kind], axes[axis], format(kind, v))));
+                fitSliders.add(slider);
+                sceneWidgets.add(slider);
+            }
+        }
+        int by = sy + 9 * sliderStep + 1;
+        int half = (sw - 2) / 2;
+        sceneWidgets.add(host.add(Button.builder(Component.translatable("editor.velvet.fit.reset"), b -> {
+            resetFit();
+        }).bounds(px, by, half, 14).build()));
+        sceneWidgets.add(host.add(Button.builder(Component.translatable("editor.velvet.fit.save"), b -> saveFits())
+                .bounds(px + half + 2, by, half, 14)
+                .tooltip(Tooltip.create(Component.translatable("editor.velvet.fit.save.tip"))).build()));
+    }
+
+    private List<org.velvet.entity.girl.scene.SceneType> scenes() {
+        return org.velvet.entity.girl.scene.SceneType.of(host.state().preset);
+    }
+
+    @Nullable
+    private org.velvet.entity.girl.scene.SceneType scene() {
+        List<org.velvet.entity.girl.scene.SceneType> list = scenes();
+        return list.isEmpty() ? null : list.get(Math.floorMod(sceneIndex, list.size()));
+    }
+
+    /** The scene's poses in order: waiting for him, then every stage from the first one on. */
+    private List<org.velvet.entity.girl.GirlAction> stages() {
+        org.velvet.entity.girl.scene.SceneType scene = scene();
+        List<org.velvet.entity.girl.GirlAction> out = new ArrayList<>();
+        if (scene == null) return out;
+        var flow = scene.flow(host.state().preset);
+        if (flow.place().waiting() != null) out.add(flow.place().waiting());
+        java.util.List<org.velvet.entity.girl.GirlAction> next = new java.util.LinkedList<>();
+        next.add(flow.firstStage());
+        while (!next.isEmpty()) {
+            org.velvet.entity.girl.GirlAction a = next.removeFirst();
+            if (a == null || a == org.velvet.entity.girl.GirlAction.NULL || out.contains(a) || a.animation == null) continue;
+            out.add(a);
+            next.add(a.next());
+            next.add(a.finish());
+        }
+        return out;
+    }
+
+    @Nullable
+    private org.velvet.entity.girl.GirlAction stage() {
+        List<org.velvet.entity.girl.GirlAction> list = stages();
+        return list.isEmpty() ? null : list.get(Math.floorMod(stageIndex, list.size()));
+    }
+
+    private void pickScene(int by) {
+        saveFitsIfChanged();
+        sceneIndex += by;
+        // start on its first loop: that's where they meet the longest
+        List<org.velvet.entity.girl.GirlAction> list = stages();
+        stageIndex = 0;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).isPaced()) {
+                stageIndex = i;
+                break;
+            }
+        }
+        showScene();
+    }
+
+    private void pickStage(int by) {
+        stageIndex += by;
+        showScene();
+    }
+
+    /** The stand-in plays the picked pose of the picked scene, with the player as her partner. */
+    private void showScene() {
+        AbstractGirlEntity girl = host.state().preview;
+        if (girl != null) {
+            boolean on = section == Section.SCENE && scene() != null && stage() != null;
+            girl.clientPreviewScene = on ? scene() : null;
+            girl.clientPreviewAnimation = on ? org.velvet.client.animation.GirlAnimationController.stageAnimation(
+                    host.state().preset, stage()) : pose;
+        }
+        syncWidgets();
+    }
+
+    private float fitValue(int kind, int axis) {
+        org.velvet.entity.girl.scene.SceneType scene = scene();
+        if (scene == null) return kind == 0 ? 1 : 0;
+        BoneTweaks.Tweak t = org.velvet.client.scene.SceneFits.get(host.state().preset, scene).get(fitBone);
+        if (t == null) return kind == 0 ? 1 : 0;
+        return (kind == 0 ? t.scale : kind == 1 ? t.offset : t.rotation)[axis];
+    }
+
+    private void setFitValue(int kind, int axis, float v) {
+        if (syncing) return;
+        org.velvet.entity.girl.scene.SceneType scene = scene();
+        if (scene == null) return;
+        BoneTweaks.Tweak t = org.velvet.client.scene.SceneFits.edit(host.state().preset, scene, fitBone);
+        (kind == 0 ? t.scale : kind == 1 ? t.offset : t.rotation)[axis] = v;
+        fitsChanged = true;
+    }
+
+    void resetFit() {
+        org.velvet.entity.girl.scene.SceneType scene = scene();
+        if (scene == null) return;
+        org.velvet.client.scene.SceneFits.reset(host.state().preset, scene);
+        fitsChanged = true;
+        syncWidgets();
+    }
+
+    private void saveFits() {
+        org.velvet.client.scene.SceneFits.save();
+        fitsChanged = false;
+    }
+
+    private void saveFitsIfChanged() {
+        if (fitsChanged) saveFits();
     }
 
     // ---- Bones ----
@@ -275,15 +447,28 @@ public final class ModelTab implements EditorTab {
         rebuildRows();
     }
 
-    /** Every animation of the preset, the usual ones first. */
+    /**
+     * Every pose there is, in one list for any preset (they all share the skeleton): hers first, the usual
+     * ones at the top; then the emotes; then every other preset's, under its name.
+     */
     private static List<Pose> posesOf(org.velvet.entity.girl.GirlType preset) {
         List<Pose> out = new ArrayList<>();
         out.add(new Pose("idle", ""));
-        String folder = preset.assetFolder();
-        var baked = software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().get(ResourceLocation.fromNamespaceAndPath(
-                Velvet.MODID, "animations/" + folder + "/" + folder + ".animation.json"));
-        if (baked == null) return out;
-        String prefix = "animation." + folder + ".";
+        addPoses(out, preset);
+        out.add(new Pose("emotes", "", true));
+        for (String e : List.of("joy", "cry", "angry")) out.add(new Pose("emote_" + e, "animation.emotes." + e));
+        for (org.velvet.entity.girl.GirlType other : org.velvet.entity.girl.GirlType.values()) {
+            if (other == preset) continue;
+            out.add(new Pose(other.id(), "", true));
+            addPoses(out, other);
+        }
+        return out;
+    }
+
+    private static void addPoses(List<Pose> out, org.velvet.entity.girl.GirlType preset) {
+        var baked = software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().get(preset.animations());
+        if (baked == null) return;
+        String prefix = "animation." + preset.animationPrefix() + ".";
         List<String> names = new ArrayList<>();
         for (String full : baked.animations().keySet()) {
             if (!full.startsWith(prefix)) continue;
@@ -292,11 +477,15 @@ public final class ModelTab implements EditorTab {
         }
         names.sort(java.util.Comparator.comparingInt((String n) -> KNOWN.contains(n) ? KNOWN.indexOf(n) : KNOWN.size())
                 .thenComparing(n -> n));
-        for (String n : names) out.add(new Pose(n, n));
-        return out;
+        for (String n : names) out.add(new Pose(n, prefix + n));
     }
 
     private static Component poseName(Pose p) {
+        if (p.header()) {
+            if (p.key().equals("emotes")) return Component.translatable("editor.velvet.pose.emotes");
+            var type = org.velvet.entity.girl.GirlType.byId(p.key());
+            return type != null ? type.displayName() : Component.literal(p.key());
+        }
         String key = "editor.velvet.pose." + p.key();
         return net.minecraft.client.resources.language.I18n.exists(key) ? Component.translatable(key)
                 : Component.literal(p.key().replace('_', ' '));
@@ -564,9 +753,10 @@ public final class ModelTab implements EditorTab {
     // ---- Widgets ----
 
     private void showSection(Section s) {
+        if (section == Section.SCENE && s != Section.SCENE) saveFitsIfChanged();
         section = s;
         if (s == Section.TEXTURE) refreshFiles();
-        syncWidgets();
+        showScene();
     }
 
     @Override
@@ -577,14 +767,22 @@ public final class ModelTab implements EditorTab {
             select(null);
             setPose(new Pose("idle", ""));
         }
-        if (host.state().preview != null) host.state().preview.clientSelectedBone = selected;
-        syncWidgets();
+        if (host.state().preview != null) {
+            host.state().preview.clientSelectedBone = selected;
+            // the animation tab plays its own on the same stand-in: back to the pose picked here
+            host.state().preview.clientPreviewAnimation = pose;
+        }
+        showScene();
     }
 
     @Override
     public void onHide() {
         if (host == null) return;
-        if (host.state().preview != null) host.state().preview.clientSelectedBone = null;
+        if (host.state().preview != null) {
+            host.state().preview.clientSelectedBone = null;
+            host.state().preview.clientPreviewScene = null;
+        }
+        saveFitsIfChanged();
     }
 
     /** Values, availability and which section's widgets show. */
@@ -610,6 +808,23 @@ public final class ModelTab implements EditorTab {
             wd.active = picked;
         });
         textureWidgets.forEach(wd -> wd.visible = section == Section.TEXTURE);
+        sceneWidgets.forEach(wd -> wd.visible = section == Section.SCENE);
+        if (sceneButton != null) {
+            var scene = scene();
+            var stage = stage();
+            sceneButton.setMessage(scene == null ? Component.literal("-") : Component.translatable(scene.translationKey()));
+            stageButton.setMessage(Component.translatable("editor.velvet.fit.pose",
+                    stage == null ? "-" : stage.name().toLowerCase(Locale.ROOT).replace('_', ' ')));
+            for (int i = 0; i < fitBoneButtons.size(); i++) {
+                String bone = org.velvet.client.scene.SceneFits.BONES.get(i);
+                fitBoneButtons.get(i).setMessage(Component.translatable("editor.velvet.fit.bone." + bone)
+                        .withStyle(bone.equals(fitBone) ? ChatFormatting.YELLOW : ChatFormatting.WHITE));
+            }
+            for (RangeSlider fs : fitSliders) {
+                fs.sync();
+                fs.active = scene != null;
+            }
+        }
         selectionWidgets.forEach(wd -> wd.active = picked);
         BoneTweaks.Tweak t = current();
         int tint = t == null ? BoneTweaks.NO_TINT : t.tint;
@@ -718,7 +933,7 @@ public final class ModelTab implements EditorTab {
             int i = (int) ((my - poseBox[1]) / POSE_ROW) + poseScroll;
             if (i >= 0 && i < poses.size() + 1) {
                 if (i == 0) paused = !paused;
-                else setPose(poses.get(i - 1));
+                else if (!poses.get(i - 1).header()) setPose(poses.get(i - 1));
             }
             return true;
         }
@@ -910,7 +1125,7 @@ public final class ModelTab implements EditorTab {
         g.drawString(font, font.plainSubstrByWidth(hint.getString(), v[2] - v[0] - 6), v[0] + 3, v[3] - 10, 0x90FFFFFF, false);
 
         // properties
-        int px = x + w - propsW(), py = y + TOOLBAR + 14;
+        int px = x + w - propsW(), py = y + TOOLBAR + 26;
         if (section == Section.TEXTURE) renderTexture(g, px, py + 56, mouseX, mouseY);
         else if (section == Section.COLOR && selected == null || section == Section.TRANSFORM && selected == null) {
             g.drawString(font, Component.translatable("editor.velvet.pick_bone").withStyle(ChatFormatting.ITALIC),
@@ -1001,6 +1216,11 @@ public final class ModelTab implements EditorTab {
                 active = paused;
             } else {
                 Pose ps = poses.get(idx - 1);
+                if (ps.header()) {
+                    g.fill(p[0], ry, p[2], ry + POSE_ROW, 0x70000000);
+                    g.drawString(font, font.plainSubstrByWidth(poseName(ps).getString(), POSES_W - 5), p[0] + 3, ry + 2, 0xFF9FD0FF, false);
+                    continue;
+                }
                 label = poseName(ps);
                 active = ps.animation().isEmpty() ? pose == null : ps.animation().equals(pose);
             }
@@ -1044,7 +1264,7 @@ public final class ModelTab implements EditorTab {
     /** Clicks on the texture file list (not a widget). */
     private boolean clickTextureList(double mx, double my) {
         if (section != Section.TEXTURE) return false;
-        int px = x + w - propsW(), listY = y + TOOLBAR + 14 + 56 + 10;
+        int px = x + w - propsW(), listY = y + TOOLBAR + 26 + 56 + 10;
         int listBottom = y + h - (textureStatus != null ? 22 : 2);
         if (mx < px || mx >= px + propsW() || my < listY || my >= listBottom) return false;
         int i = (int) ((my - listY - 2) / ROW) + fileScroll;

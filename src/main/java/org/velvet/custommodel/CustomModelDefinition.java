@@ -20,7 +20,7 @@ public class CustomModelDefinition {
     public final ResourceLocation texture;
     public ClothingSlot slot = ClothingSlot.CUSTOM_BONE;
     public String boneName = "";
-    public Set<GirlType> girls = EnumSet.noneOf(GirlType.class);
+    public Set<GirlType> girls = new HashSet<>();
     public Set<String> hiddenBones = new HashSet<>();
     public ClothingLighting lighting = ClothingLighting.DEFAULT;
     public float scale = 1.0F;
@@ -49,7 +49,10 @@ public class CustomModelDefinition {
                     case "slot"       -> def.slot = ClothingSlot.valueOf(val.toUpperCase());
                     case "bone"       -> def.boneName = val;
                     case "girls"      -> {
-                        for (String g : val.split(",")) def.girls.add(GirlType.valueOf(g.trim().toUpperCase()));
+                        for (String g : val.split(",")) {
+                            GirlType type = GirlType.byId(g.trim());
+                            if (type != null) def.girls.add(type);
+                        }
                     }
                     case "hidden"     -> {
                         for (String b : val.split(",")) def.hiddenBones.add(b.trim());

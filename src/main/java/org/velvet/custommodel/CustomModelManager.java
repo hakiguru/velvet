@@ -20,7 +20,7 @@ public final class CustomModelManager {
     // All registered custom models by ID
     private static final Map<String, CustomModelDefinition> MODELS = new java.util.HashMap<>();
     // Girl-specific lists (each girl has a list of allowed model IDs)
-    private static final Map<GirlType, List<String>> GIRL_MODELS = new EnumMap<>(GirlType.class);
+    private static final Map<GirlType, List<String>> GIRL_MODELS = new java.util.HashMap<>();
 
     private CustomModelManager() {}
 

@@ -41,6 +41,16 @@ public final class BedFinder {
 
     @Nullable
     public static Bed find(AbstractGirlEntity girl) {
+        return find(girl, SceneType.Spot.SIDE);
+    }
+
+    /**
+     * The closest free bed she can walk to, with a spot of the given kind: SIDE is any free floor cell next
+     * to either half, FOOT only the cell beyond the end of its foot, in line with it (for scenes where the
+     * partner lies along the bed), LEFT the cell left of the foot half (seen from its foot end).
+     */
+    @Nullable
+    public static Bed find(AbstractGirlEntity girl, SceneType.Spot kind) {
         if (!(girl.level() instanceof ServerLevel level)) return null;
         BlockPos origin = girl.blockPosition();
 
@@ -55,7 +65,7 @@ public final class BedFinder {
         while (heads.hasNext() && checked < MAX_PATH_CHECKS) {
             BlockPos head = heads.next();
             if (bedAt(level, head) == null) continue;
-            for (Bed bed : spotsAround(level, head, girl.blockPosition())) {
+            for (Bed bed : spotsAround(level, head, girl.blockPosition(), kind)) {
                 if (checked++ >= MAX_PATH_CHECKS) break;
                 Path path = girl.getNavigation().createPath(bed.spot(), 0);
                 if (path != null && path.canReach()) return bed;
@@ -65,10 +75,21 @@ public final class BedFinder {
     }
 
     /** Free spots next to the bed with head {@code head}, closest to {@code from} first. */
-    private static List<Bed> spotsAround(ServerLevel level, BlockPos head, BlockPos from) {
+    private static List<Bed> spotsAround(ServerLevel level, BlockPos head, BlockPos from, SceneType.Spot kind) {
         Direction facing = level.getBlockState(head).getValue(BedBlock.FACING);
         BlockPos foot = head.relative(facing.getOpposite());
         List<Bed> spots = new ArrayList<>();
+        if (kind == SceneType.Spot.FOOT) {
+            BlockPos spot = foot.relative(facing.getOpposite());
+            if (canStandAt(level, spot)) spots.add(new Bed(head, foot, spot, facing));
+            return spots;
+        }
+        if (kind == SceneType.Spot.LEFT) {
+            // left of the foot half, as seen lying in the bed head up
+            BlockPos spot = foot.relative(facing.getCounterClockWise());
+            if (canStandAt(level, spot)) spots.add(new Bed(head, foot, spot, facing.getClockWise()));
+            return spots;
+        }
         for (BlockPos part : new BlockPos[]{foot, head}) {
             for (Direction side : Direction.Plane.HORIZONTAL) {
                 BlockPos spot = part.relative(side);

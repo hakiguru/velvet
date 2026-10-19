@@ -27,8 +27,10 @@ public class Velvet {
     public Velvet(IEventBus modBus, ModContainer container) {
         instance = this;
 
-        container.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
-        container.registerConfig(ModConfig.Type.CLIENT, org.velvet.client.ClientConfig.SPEC);
+        // the mod's files have a folder of their own, see VelvetPaths
+        VelvetPaths.moveOldConfigs();
+        container.registerConfig(ModConfig.Type.COMMON, Config.SPEC, MODID + "/common.toml");
+        container.registerConfig(ModConfig.Type.CLIENT, org.velvet.client.ClientConfig.SPEC, MODID + "/client.toml");
 
         org.velvet.entity.girl.GirlRegistry.register(modBus);
         org.velvet.potion.VelvetPotions.register(modBus);

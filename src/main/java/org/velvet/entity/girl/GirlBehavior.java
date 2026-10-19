@@ -32,7 +32,11 @@ import java.util.Map;
  *   "wander": true, "pick_up_items": true, "auto_eat": true, "flee_monsters": true,
  *   "follow": { "stop_distance": 3, "run_distance": 8, "teleport_distance": 24 },
  *   "chat": { "visibility": "private" },
- *   "brain": { "provider": "internal", "model": "", "endpoint": "", "persona": "" },
+ *   "brain": { "provider": "internal", "model": "", "endpoint": "", "persona": "",
+ *              "hear_all": true, "comment_events": true, "autonomy": true, "vision": false },
+ *   "voice": { "listen": false, "speak": false, "voice": "nova" },
+ *   "talk": { "enabled": true, "chattiness": 2, "complain_hunger": true, "complain_hurt": true, "call_for_help": true,
+ *             "joy_self": true, "joy_owner": true, "comment_events": true, "greet": true },
  *   "loot": { "castes": { "minecraft:stick": "valuable", "#minecraft:logs": "valuable" } }
  * }
  * </pre>
@@ -87,6 +91,30 @@ public final class GirlBehavior {
     public String endpoint = "";
     /** Who she is, for the language models: her character, how she talks. */
     public String persona = "";
+    /** With a language model: she hears everything her owner says in chat (and players close by), not only what starts with her name. */
+    public boolean hearAll = true;
+    /** With a language model: she comments on advancements, deaths and who comes and goes, now and then. */
+    public boolean commentEvents = true;
+    /** With a language model: it decides what she does next when nothing's going on (every minute or so). */
+    public boolean autonomy = true;
+    /** With a model that sees images: she sends it what she sees, rendered from her eyes by her owner's game. */
+    public boolean vision = false;
+
+    // ---- voice (Simple Voice Chat) ----
+    /** Hears players talking near her in voice chat (speech to text through her owner's OpenAI-compatible key). */
+    public boolean voiceListen = false;
+    /** Speaks her answers out loud in voice chat (text to speech, same key). */
+    public boolean voiceSpeak = false;
+    /** The text-to-speech voice. */
+    public String ttsVoice = "nova";
+
+    // ---- what she says by herself ("talk") ----
+    /** Off: she can't say anything at all, in chat or out loud (and the language models know it). */
+    public boolean talk = true;
+    /** 0: only answers, 1: little, 2: as she is, 3: everything (and she reminds of her hunger early). */
+    public int chattiness = 2;
+    public boolean complainHunger = true, complainHurt = true, callForHelp = true, joySelf = true, joyOwner = true,
+            greet = true;
 
     /** "loot" → "castes": item ids or #tags moved to another caste for her. */
     private final Map<String, ItemCaste> casteOverrides = new LinkedHashMap<>();
@@ -112,6 +140,24 @@ public final class GirlBehavior {
         brain.addProperty("model", model);
         brain.addProperty("endpoint", endpoint);
         brain.addProperty("persona", persona);
+        brain.addProperty("hear_all", hearAll);
+        brain.addProperty("comment_events", commentEvents);
+        brain.addProperty("autonomy", autonomy);
+        brain.addProperty("vision", vision);
+        JsonObject talkJson = object(json, "talk");
+        talkJson.addProperty("enabled", talk);
+        talkJson.addProperty("chattiness", chattiness);
+        talkJson.addProperty("complain_hunger", complainHunger);
+        talkJson.addProperty("complain_hurt", complainHurt);
+        talkJson.addProperty("call_for_help", callForHelp);
+        talkJson.addProperty("joy_self", joySelf);
+        talkJson.addProperty("joy_owner", joyOwner);
+        talkJson.addProperty("comment_events", commentEvents);
+        talkJson.addProperty("greet", greet);
+        JsonObject voice = object(json, "voice");
+        voice.addProperty("listen", voiceListen);
+        voice.addProperty("speak", voiceSpeak);
+        voice.addProperty("voice", ttsVoice);
         JsonObject loot = object(json, "loot");
         JsonObject castes = new JsonObject();
         casteOverrides.forEach((key, caste) -> castes.addProperty(key, caste.id()));
@@ -176,6 +222,28 @@ public final class GirlBehavior {
             b.model = limit(string(brain, "model", b.model), 128);
             b.endpoint = limit(string(brain, "endpoint", b.endpoint), 256);
             b.persona = limit(string(brain, "persona", b.persona), MAX_PERSONA);
+            b.hearAll = bool(brain, "hear_all", b.hearAll);
+            b.commentEvents = bool(brain, "comment_events", b.commentEvents);
+            b.autonomy = bool(brain, "autonomy", b.autonomy);
+            b.vision = bool(brain, "vision", b.vision);
+        }
+        JsonObject t = child(json, "talk");
+        if (t != null) {
+            b.talk = bool(t, "enabled", b.talk);
+            b.chattiness = (int) Mth.clamp(number(t, "chattiness", b.chattiness), 0, 3);
+            b.complainHunger = bool(t, "complain_hunger", b.complainHunger);
+            b.complainHurt = bool(t, "complain_hurt", b.complainHurt);
+            b.callForHelp = bool(t, "call_for_help", b.callForHelp);
+            b.joySelf = bool(t, "joy_self", b.joySelf);
+            b.joyOwner = bool(t, "joy_owner", b.joyOwner);
+            b.commentEvents = bool(t, "comment_events", b.commentEvents);
+            b.greet = bool(t, "greet", b.greet);
+        }
+        JsonObject voice = child(json, "voice");
+        if (voice != null) {
+            b.voiceListen = bool(voice, "listen", b.voiceListen);
+            b.voiceSpeak = bool(voice, "speak", b.voiceSpeak);
+            b.ttsVoice = limit(string(voice, "voice", b.ttsVoice), 32);
         }
         JsonObject loot = child(json, "loot");
         JsonObject castes = loot == null ? null : child(loot, "castes");

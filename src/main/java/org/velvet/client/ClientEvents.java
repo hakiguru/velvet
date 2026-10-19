@@ -30,10 +30,11 @@ import org.velvet.network.packet.SceneControlPacket;
 public final class ClientEvents {
     private ClientEvents() {}
 
-    /** Skins of one world aren't the next one's. */
+    /** Skins and custom presets of one world aren't the next one's. */
     @SubscribeEvent
     public static void onLogout(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
         org.velvet.client.skin.SkinCache.clear();
+        org.velvet.client.preset.PresetCache.clear();
     }
 
     /** The speed key state the server last heard about. */

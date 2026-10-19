@@ -53,7 +53,7 @@ public class GirlEditorMenu extends AbstractContainerMenu {
      * settings file and skill levels.
      */
     public record Data(@Nullable UUID target, String behaviorJson, List<GirlEntry> girls, Set<AiProvider> keys,
-                       boolean localEndpoints, boolean debug, String settingsJson, int[] skillLevels) {
+                       boolean localEndpoints, boolean debug, String settingsJson, int[] skillLevels, String psycheJson) {
 
         public void write(RegistryFriendlyByteBuf buf) {
             buf.writeBoolean(target != null);
@@ -74,6 +74,7 @@ public class GirlEditorMenu extends AbstractContainerMenu {
             buf.writeBoolean(debug);
             buf.writeUtf(settingsJson, GirlBehavior.MAX_LENGTH);
             buf.writeVarIntArray(skillLevels);
+            buf.writeUtf(psycheJson, GirlBehavior.MAX_LENGTH);
         }
 
         public static Data read(RegistryFriendlyByteBuf buf) {
@@ -100,7 +101,8 @@ public class GirlEditorMenu extends AbstractContainerMenu {
             boolean debug = buf.readBoolean();
             String settings = buf.readUtf(GirlBehavior.MAX_LENGTH);
             int[] skills = buf.readVarIntArray(GirlSkill.values().length);
-            return new Data(target, json, girls, keys, local, debug, settings, skills);
+            String psyche = buf.readUtf(GirlBehavior.MAX_LENGTH);
+            return new Data(target, json, girls, keys, local, debug, settings, skills, psyche);
         }
     }
 
@@ -131,19 +133,23 @@ public class GirlEditorMenu extends AbstractContainerMenu {
     }
 
     /**
-     * Opens the editor for {@code target}, or without one for the girl the player edited last (or his first
-     * one) that's in a loaded chunk. {@code debug}: with the debug tabs (creative players only).
+     * Opens the editor. The NPC Editor's (not {@code debug}) is for {@code target} alone. The debug tool's has all
+     * of the player's girls as tabs, with the debug tabs on top (creative players only): without a target on the
+     * girl he edited last (or his first one) that's in a loaded chunk. True if it opened.
      */
-    public static void open(ServerPlayer player, @Nullable AbstractGirlEntity target, boolean debug) {
+    public static boolean open(ServerPlayer player, @Nullable AbstractGirlEntity target, boolean debug) {
+        debug = debug && player.isCreative();
+        if (!debug && target == null) return false;
         target = pickTarget(player, target);
-        if (target != null && (target.getCurrentAction().isBusy() || !GirlManager.canEdit(player, target))) return;
-        Data data = build(player, target, debug && player.isCreative());
+        if (target != null && (target.getCurrentAction().isBusy() || !GirlManager.canEdit(player, target))) return false;
+        Data data = build(player, target, debug);
         AbstractGirlEntity girl = target;
         Component title = girl == null ? Component.translatable("editor.velvet.no_npc") : girl.getName();
         player.openMenu(new SimpleMenuProvider((id, inv, p) -> new GirlEditorMenu(id, inv, girl, data), title), buf -> {
             buf.writeVarInt(girl == null ? -1 : girl.getId());
             data.write(buf);
         });
+        return true;
     }
 
     /** The open editor turns to {@code target}: the screen gets her data and stays open. */
@@ -185,7 +191,8 @@ public class GirlEditorMenu extends AbstractContainerMenu {
             LAST_EDITED.put(player.getUUID(), target.getGirlUUID());
         }
         List<GirlEntry> girls = new ArrayList<>();
-        for (OwnedGirls.Entry e : owned.of(player.getUUID())) {
+        // the NPC Editor is for her alone; the list of all of them is the debug tool's
+        for (OwnedGirls.Entry e : debug ? owned.of(player.getUUID()) : List.<OwnedGirls.Entry>of()) {
             AbstractGirlEntity g = loaded(e.girl());
             girls.add(g != null
                     ? new GirlEntry(e.girl(), BuiltInRegistries.ENTITY_TYPE.getKey(g.getType()), true,
@@ -203,7 +210,8 @@ public class GirlEditorMenu extends AbstractContainerMenu {
         return new Data(target == null ? null : target.getGirlUUID(),
                 target == null ? new GirlBehavior().toJson() : target.behavior().toJson(),
                 girls, AiKeys.get(player.server).withKey(player.getUUID()), mayUseLocalEndpoints(player),
-                debug, target == null ? new NpcSettings().toJson() : target.settings().toJson(), skills);
+                debug, target == null ? new NpcSettings().toJson() : target.settings().toJson(), skills,
+                target == null ? "{}" : target.psyche().toJson().toString());
     }
 
     /** Local servers and custom addresses are reached by the server itself: operators and the host only, by default. */

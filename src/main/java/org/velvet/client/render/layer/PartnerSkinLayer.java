@@ -63,13 +63,15 @@ public class PartnerSkinLayer<T extends AbstractGirlEntity> extends GeoRenderLay
                        int packedLight, int packedOverlay) {
         girl.clientPartnerEyes = null;
         girl.clientSceneFocus = null;
-        if (!girl.getCurrentAction().isAttached() || girl.getPartnerUUID() == null) return;
+        // the editor's scene fitting shows the player as her partner
+        boolean preview = girl.clientPreviewScene != null;
+        if (!preview && (!girl.getCurrentAction().isAttached() || girl.getPartnerUUID() == null)) return;
         // her torso as the main pass just placed it (the passes below would move it to their own matrices)
         GeoBone torso = model.getBone(GIRL_TORSO_BONE).orElse(null);
         Vec3 girlTorso = torso != null && torso.isTrackingMatrices() ? toVec(torso.getWorldPosition()) : null;
-        Player partner = girl.level().getPlayerByUUID(girl.getPartnerUUID());
+        Player partner = preview ? Minecraft.getInstance().player : girl.level().getPlayerByUUID(girl.getPartnerUUID());
         if (!(partner instanceof AbstractClientPlayer clientPlayer)) return;
-        boolean ownEyes = partner == Minecraft.getInstance().player && SceneCamera.isLookingThroughPartnerEyes();
+        boolean ownEyes = !preview && partner == Minecraft.getInstance().player && SceneCamera.isLookingThroughPartnerEyes();
 
         BoneVisibility visibility = BoneVisibility.showOnly(model,
                 bone -> bone.getName().equals(AbstractGirlGeoModel.PARTNER_BONE));

@@ -109,7 +109,10 @@ public final class GirlNeeds {
         if (girl.getFood() == 0) {
             if (++starveTimer >= STARVE_INTERVAL) {
                 starveTimer = 0;
-                girl.hurt(girl.damageSources().starve(), 1.0F);
+                // like a player: hunger kills only on hard; on easy it stops at half her health, on normal at half a heart
+                Difficulty d = girl.level().getDifficulty();
+                float floor = d == Difficulty.HARD ? 0 : d == Difficulty.EASY ? 10 : 1;
+                if (girl.getHealth() > floor) girl.hurt(girl.damageSources().starve(), 1.0F);
             }
         } else {
             starveTimer = 0;

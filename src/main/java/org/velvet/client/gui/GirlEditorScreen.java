@@ -37,6 +37,9 @@ import org.velvet.entity.girl.NpcSettings;
 import org.velvet.menu.GirlEditorMenu;
 import org.velvet.network.NetworkHandler;
 import org.velvet.network.packet.CreateNpcPacket;
+import org.velvet.network.packet.EditorNpcActionPacket;
+import org.velvet.client.gui.editor.EmotionsTab;
+import org.velvet.client.gui.editor.PersonalityTab;
 import org.velvet.network.packet.EditorSelectGirlPacket;
 import org.velvet.network.packet.ModelListPacket;
 import org.velvet.network.packet.SaveGirlEditorPacket;
@@ -53,20 +56,23 @@ import java.util.UUID;
 import static org.velvet.client.gui.PanelArt.*;
 
 /**
- * The NPC editor, opened with the editor wand (or the debug tool, with its own tabs on top). On the left, a
- * tab for each of the player's girls (her face and name; scrolls smoothly when there are many) and "New NPC"
- * under them; girls far away show but can't be edited until they're in a loaded area. Along the top:
+ * The NPC editor. The NPC Editor item opens it on one girl; the debug tool's has, on the left, a tab for each
+ * of the player's girls (her face and name; scrolls smoothly when there are many) and "New NPC" under them
+ * (girls far away show but can't be edited until they're in a loaded area), and buttons to go to her, bring
+ * her over or delete her. Along the top:
  * <ul>
  *   <li>Character: her name, how she goes about her day, and what there is to know about her.</li>
- *   <li>Preset: the model she wears, with its animations and scenes.</li>
+ *   <li>Preset: the model she wears; custom presets are made here too.</li>
  *   <li>Model: a small Blockbench, see {@link ModelTab}.</li>
  *   <li>AI: her brain (built in or a language model) and her prompt, see {@link AiTab}.</li>
  *   <li>JSON: all of her behavior as JSON, including keys the forms don't show.</li>
- *   <li>Debug tool only: instinct, character, levels and flags, see {@link DebugTab}.</li>
+ *   <li>Emotions: how she feels right now, see {@link EmotionsTab}.</li>
+ *   <li>Debug tool only: instinct, character, levels and flags, see {@link DebugTab} and {@link PersonalityTab}.</li>
  * </ul>
- * Nothing changes until "Save"; the model view shows the changes meanwhile. Picking another girl's tab keeps
- * this screen where it is: the server points the open editor at her and a new screen with her data takes
- * this one's place.
+ * Each tab has a window size that fits it; the window can be resized by its edges and keeps the size it was
+ * given (see {@link WindowFrame}). Nothing changes until "Save"; the model view shows the changes meanwhile.
+ * Picking another girl's tab keeps this screen where it is: the server points the open editor at her and a
+ * new screen with her data takes this one's place.
  * <p>
  * A plain screen rather than a container screen: those take mouse drags for slots and close on the
  * inventory key, which gets typed into the text fields here.
@@ -74,22 +80,31 @@ import static org.velvet.client.gui.PanelArt.*;
 public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMenu>, EditorTab.Host {
 
     private enum Tab {
-        CHARACTER(new ItemStack(Items.NAME_TAG), false),
-        PRESET(new ItemStack(VelvetItems.NPC_SPAWN_EGG.get()), false),
-        MODEL(new ItemStack(Items.ARMOR_STAND), false),
-        AI(new ItemStack(Items.COMPARATOR), false),
-        JSON(new ItemStack(Items.WRITABLE_BOOK), false),
-        INSTINCT(new ItemStack(Items.SHIELD), true),
-        PERSONALITY(new ItemStack(Items.BOOK), true),
-        LEVELS(new ItemStack(Items.EXPERIENCE_BOTTLE), true),
-        FLAGS(new ItemStack(Items.COMMAND_BLOCK), true);
+        //                                                      debug   size     smallest
+        CHARACTER(new ItemStack(Items.NAME_TAG), false,               400, 250, 330, 210),
+        PRESET(new ItemStack(VelvetItems.NPC_SPAWN_EGG.get()), false, 470, 290, 360, 240),
+        MODEL(new ItemStack(Items.ARMOR_STAND), false,                580, 330, 440, 260),
+        ANIMATION(new ItemStack(Items.CLOCK), false,                  600, 340, 460, 270),
+        TEXTURE(new ItemStack(Items.PAINTING), false,                 560, 340, 420, 270),
+        AI(new ItemStack(Items.COMPARATOR), false,                    450, 280, 360, 230),
+        JSON(new ItemStack(Items.WRITABLE_BOOK), false,               450, 280, 300, 200),
+        EMOTIONS(new ItemStack(Items.POPPY), false,                   360, 250, 300, 210),
+        INSTINCT(new ItemStack(Items.SHIELD), true,                   360, 220, 320, 200),
+        PERSONALITY(new ItemStack(Items.BOOK), true,                  480, 300, 340, 220),
+        LEVELS(new ItemStack(Items.EXPERIENCE_BOTTLE), true,          360, 230, 320, 200),
+        FLAGS(new ItemStack(Items.COMMAND_BLOCK), true,               330, 190, 300, 170);
 
         final ItemStack icon;
         final boolean debug;
+        final int prefW, prefH, minW, minH;
 
-        Tab(ItemStack icon, boolean debug) {
+        Tab(ItemStack icon, boolean debug, int prefW, int prefH, int minW, int minH) {
             this.icon = icon;
             this.debug = debug;
+            this.prefW = prefW;
+            this.prefH = prefH;
+            this.minW = minW;
+            this.minH = minH;
         }
 
         Component title() {
@@ -118,6 +133,9 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     private final EditorState state;
     private final AiTab aiTab;
+    private final WindowFrame frame = new WindowFrame(this::rebuildWidgets);
+    /** Debug: clicked "Delete" once; again within a few seconds to delete her. */
+    private long deleteArmedUntil;
     private String json;
     @Nullable private String jsonError;
     private int savedTicks;
@@ -153,10 +171,22 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
         GirlSkin skin = found != null ? GirlSkin.decode(found.appearance().getString("skin")) : null;
         this.state = new EditorState(name, preset, tweaks, skin, behavior, data.debug(), NpcSettings.fromJson(data.settingsJson()),
                 data.skillLevels(), preview);
+        this.state.personality = personalityOf(data.psycheJson());
         this.json = behavior.toJson();
         this.aiTab = new AiTab(data.keys(), data.localEndpoints(), behavior.provider);
         for (Tab t : Tab.values()) if (!t.debug || data.debug()) tabs.add(t);
         this.tab = tabs.contains(lastTab) ? lastTab : Tab.CHARACTER;
+    }
+
+    @Nullable
+    private static org.velvet.entity.girl.psyche.Personality personalityOf(String json) {
+        try {
+            var o = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            if (!o.has("traits")) return null;
+            return org.velvet.entity.girl.psyche.Personality.fromJson(o.getAsJsonObject("traits"), net.minecraft.util.RandomSource.create());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     @Nullable
@@ -215,14 +245,22 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     // ---- Layout ----
 
+    /** The debug tool's editor has the list of girls on the left. */
+    private boolean hasList() {
+        return state.debug;
+    }
+
     @Override
     protected void init() {
-        panelW = Mth.clamp(width - NPC_TAB_W - SCROLLER_W - 12, 330, 540);
-        panelH = Mth.clamp(height - TAB_RISE - 8, 220, 300);
-        left = (width - panelW + NPC_TAB_W + SCROLLER_W) / 2;
-        top = (height - panelH + TAB_RISE) / 2;
+        // never narrower than its row of tabs
+        int tabsW = tabs.size() * (TAB_W + TAB_GAP) + 6;
+        frame.fit("editor/" + tab.name().toLowerCase(), width, height, Math.max(tab.prefW, tabsW), tab.prefH, Math.max(tab.minW, tabsW), tab.minH,
+                hasList() ? NPC_TAB_W + SCROLLER_W : 0, TAB_RISE);
+        panelW = frame.w;
+        panelH = frame.h;
+        left = frame.x;
+        top = frame.y;
         tabWidgets.clear();
-        panels.clear();
         for (Tab t : Tab.values()) tabWidgets.put(t, new ArrayList<>());
         npcScroll = npcScrollTarget = Mth.clamp(npcScrollTarget, 0, maxNpcScroll());
 
@@ -231,38 +269,75 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
         int contentH = panelH - TOP - BOTTOM_BAR;
 
         if (target != null && girlEditable()) {
-            panels.put(Tab.CHARACTER, new CharacterTab(target, girl));
-            panels.put(Tab.PRESET, new PresetTab());
-            panels.put(Tab.MODEL, new ModelTab());
-            panels.put(Tab.AI, aiTab);
-            if (state.debug) {
-                panels.put(Tab.INSTINCT, new DebugTab(DebugTab.Page.INSTINCT));
-                panels.put(Tab.PERSONALITY, new DebugTab(DebugTab.Page.CHARACTER));
-                panels.put(Tab.LEVELS, new DebugTab(DebugTab.Page.LEVELS));
-                panels.put(Tab.FLAGS, new DebugTab(DebugTab.Page.FLAGS));
+            // made once: a tab keeps where it was (camera, scroll, selection) when the window is resized
+            if (panels.isEmpty()) {
+                panels.put(Tab.CHARACTER, new CharacterTab(target, girl));
+                panels.put(Tab.PRESET, new PresetTab());
+                panels.put(Tab.MODEL, new ModelTab());
+                panels.put(Tab.ANIMATION, new org.velvet.client.gui.editor.AnimationTab());
+                panels.put(Tab.TEXTURE, new org.velvet.client.gui.editor.TextureTab());
+                panels.put(Tab.AI, aiTab);
+                panels.put(Tab.EMOTIONS, new EmotionsTab(girl, state.personality));
+                if (state.debug) {
+                    panels.put(Tab.INSTINCT, new DebugTab(DebugTab.Page.INSTINCT));
+                    panels.put(Tab.PERSONALITY, new PersonalityTab());
+                    panels.put(Tab.LEVELS, new DebugTab(DebugTab.Page.LEVELS));
+                    panels.put(Tab.FLAGS, new DebugTab(DebugTab.Page.FLAGS));
+                }
             }
-            for (var e : panels.entrySet()) {
-                adding = e.getKey();
-                e.getValue().init(this, x, y, contentW, contentH);
+            // only the open tab is laid out: each has a window size of its own
+            EditorTab open = panels.get(tab);
+            if (open != null) {
+                adding = tab;
+                open.init(this, x, y, contentW, contentH);
             }
-            adding = Tab.JSON;
-            TextArea jsonBox = add(new TextArea(font, x, y, contentW, contentH - 12, Component.literal("{ }"), Component.literal("JSON")));
-            jsonBox.setCharacterLimit(GirlBehavior.MAX_LENGTH);
-            jsonBox.setValue(json);
-            jsonBox.setValueListener(v -> {
-                if (!v.equals(json)) state.dirty = true;
-                json = v;
-            });
+            if (tab == Tab.JSON) {
+                adding = Tab.JSON;
+                TextArea jsonBox = add(new TextArea(font, x, y, contentW, contentH - 12, Component.literal("{ }"), Component.literal("JSON")));
+                jsonBox.setCharacterLimit(GirlBehavior.MAX_LENGTH);
+                jsonBox.setValue(json);
+                jsonBox.setValueListener(v -> {
+                    if (!v.equals(json)) state.dirty = true;
+                    json = v;
+                });
+            }
             adding = null;
 
             int by = top + panelH - BOTTOM_BAR + 5;
             addRenderableWidget(Button.builder(Component.translatable("editor.velvet.save"), b -> save())
                     .bounds(left + panelW - MARGIN - 2 * 70 - 4, by, 70, 18).build());
         }
+        if (state.debug && target != null) addDebugButtons();
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose())
                 .bounds(left + panelW - MARGIN - 70, top + panelH - BOTTOM_BAR + 5, 70, 18).build());
-        selectTab(tab);
+        showTab(tab);
         SkinCache.setUploadListener(null);
+    }
+
+    /** Debug: go to her, bring her here, delete her (twice, to be sure). */
+    private void addDebugButtons() {
+        int by = top + panelH - BOTTOM_BAR + 5, bx = left + MARGIN;
+        UUID id = target.id();
+        int bw = Mth.clamp((panelW - 2 * MARGIN - 2 * 74 - 12) / 3, 40, 70);
+        addRenderableWidget(Button.builder(Component.translatable("editor.velvet.debug.teleport"),
+                        b -> NetworkHandler.sendToServer(EditorNpcActionPacket.of(EditorNpcActionPacket.TELEPORT_TO, id)))
+                .bounds(bx, by, bw, 18).tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("editor.velvet.debug.teleport.tooltip"))).build());
+        addRenderableWidget(Button.builder(Component.translatable("editor.velvet.debug.bring"),
+                        b -> NetworkHandler.sendToServer(EditorNpcActionPacket.of(EditorNpcActionPacket.BRING, id)))
+                .bounds(bx + bw + 3, by, bw, 18).tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("editor.velvet.debug.bring.tooltip"))).build());
+        boolean armed = System.currentTimeMillis() < deleteArmedUntil;
+        addRenderableWidget(Button.builder(Component.translatable(armed ? "editor.velvet.debug.delete.sure" : "editor.velvet.debug.delete")
+                        .withStyle(armed ? ChatFormatting.RED : ChatFormatting.RESET), b -> {
+                    if (System.currentTimeMillis() < deleteArmedUntil) {
+                        NetworkHandler.sendToServer(EditorNpcActionPacket.of(EditorNpcActionPacket.DELETE, id));
+                    } else {
+                        deleteArmedUntil = System.currentTimeMillis() + 3000;
+                        rebuildWidgets();
+                    }
+                })
+                .bounds(bx + 2 * (bw + 3), by, bw, 18).build());
     }
 
     private boolean girlEditable() {
@@ -271,25 +346,28 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     // ---- Tabs ----
 
-    /** Switches tabs; leaving the JSON tab takes over what was typed there, unless it doesn't parse. */
+    /**
+     * Switches tabs: the window takes the new tab's size and lays it out. Leaving the JSON tab takes over what
+     * was typed there, unless it doesn't parse.
+     */
     private boolean selectTab(Tab selected) {
         boolean fromJson = tab == Tab.JSON && selected != Tab.JSON;
         if (fromJson && !applyJson()) return false;
-        if (selected == Tab.JSON && tab != Tab.JSON) setJsonFromBehavior();
-        Tab before = tab;
+        if (selected == Tab.JSON && tab != Tab.JSON) json = state.behavior.toJson();
+        EditorTab old = panel();
+        if (old != null && selected != tab) old.onHide();
         tab = selected;
         lastTab = selected;
-        if (fromJson) {
-            rebuildWidgets(); // the forms show what was typed; this comes back here with the new tab
-            return true;
-        }
-        tabWidgets.forEach((t, widgets) -> widgets.forEach(w -> w.visible = t == selected));
+        rebuildWidgets();
+        return true;
+    }
+
+    /** After a layout: the open tab's widgets show, the panel hears it. */
+    private void showTab(Tab open) {
+        tabWidgets.forEach((t, widgets) -> widgets.forEach(w -> w.visible = t == open));
         if (getFocused() instanceof AbstractWidget w && !w.visible) setFocused(null);
-        EditorTab old = panels.get(before);
-        if (before != selected && old != null) old.onHide();
         EditorTab panel = panel();
         if (panel != null) panel.onShow();
-        return true;
     }
 
     @Nullable
@@ -304,14 +382,6 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
     }
 
     // ---- Editing ----
-
-    private void setJsonFromBehavior() {
-        json = state.behavior.toJson();
-        jsonError = null;
-        for (AbstractWidget w : tabWidgets.get(Tab.JSON)) {
-            if (w instanceof TextArea box) box.setValue(json);
-        }
-    }
 
     /** Parses the JSON tab into the behavior; on an error shows it and keeps the old behavior. */
     private boolean applyJson() {
@@ -328,10 +398,15 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
     private void save() {
         if (!girlEditable()) return;
         if (tab == Tab.JSON && !applyJson()) return;
+        for (EditorTab panel : panels.values()) panel.beforeSave();
+        org.velvet.client.preset.PresetEditing.save(state.preset);
         int[] levels = state.debug ? state.skillLevels : new int[0];
+        String personality = state.debug && state.personalityChanged && state.personality != null
+                ? state.personality.toJson().toString() : "";
         NetworkHandler.sendToServer(new SaveGirlEditorPacket(state.name, state.preset.id(), BoneTweaks.of(state.tweaks).toTag(),
                 state.skin == null ? "" : state.skin.encode(), state.behavior.toJson(),
-                state.debug ? state.settings.toJson() : "", levels));
+                state.debug ? state.settings.toJson() : "", levels, personality));
+        state.personalityChanged = false;
         state.dirty = false;
         savedTicks = SAVED_TICKS;
         AbstractGirlEntity face = target == null ? null : faces.get(target.id());
@@ -423,12 +498,13 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (frame.mouseClicked(mouseX, mouseY, button)) return true;
         Tab clicked = button == 0 ? tabAt(mouseX, mouseY) : null;
         if (clicked != null) {
             if (clicked != tab && selectTab(clicked)) click();
             return true;
         }
-        int row = button == 0 ? rowAt(mouseX, mouseY) : -1;
+        int row = button == 0 && hasList() ? rowAt(mouseX, mouseY) : -1;
         if (row >= 0) {
             click();
             if (row == data.girls().size()) newNpc();
@@ -436,7 +512,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
             return true;
         }
         int[] sc = scroller();
-        if (button == 0 && maxNpcScroll() > 0 && mouseX >= sc[0] && mouseX < sc[2] && mouseY >= sc[1] && mouseY < sc[3]) {
+        if (button == 0 && hasList() && maxNpcScroll() > 0 && mouseX >= sc[0] && mouseX < sc[2] && mouseY >= sc[1] && mouseY < sc[3]) {
             draggingScroller = true;
             int ty = thumbY();
             // grabbed on the thumb it stays under the mouse; elsewhere the thumb jumps there first
@@ -466,6 +542,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (frame.mouseDragged(mouseX, mouseY)) return true;
         if (draggingScroller) {
             scrollTo(mouseY);
             return true;
@@ -477,6 +554,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (frame.mouseReleased()) return true;
         draggingScroller = false;
         EditorTab panel = panel();
         if (panel != null && panel.mouseReleased(mouseX, mouseY, button)) return true;
@@ -485,7 +563,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (mouseX < left && maxNpcScroll() > 0) {
+        if (hasList() && mouseX < left && maxNpcScroll() > 0) {
             // a row per notch, gliding there
             npcScrollTarget = Mth.clamp(npcScrollTarget - (float) scrollY * rowStep(), 0, maxNpcScroll());
             return true;
@@ -529,6 +607,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
     public void removed() {
         super.removed();
         SkinCache.setUploadListener(null);
+        WindowFrame.resetCursor();
     }
 
     // ---- Rendering ----
@@ -540,20 +619,18 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
         npcScroll += (npcScrollTarget - npcScroll) * Math.min(1, 0.4F + partialTick * 0.1F);
         if (Math.abs(npcScrollTarget - npcScroll) < 0.5F) npcScroll = npcScrollTarget;
         for (int i = 0; i < tabs.size(); i++) if (tabs.get(i) != tab) drawTab(g, i);
-        renderNpcTabs(g, mouseX, mouseY, false);
+        if (hasList()) renderNpcTabs(g, mouseX, mouseY, false);
         drawPanel(g, left, top, panelW, panelH);
         int open = tabs.indexOf(tab);
         drawTab(g, open);
         joinOpenTab(g, tabX(left, open), top);
-        renderNpcTabs(g, mouseX, mouseY, true);
+        if (hasList()) renderNpcTabs(g, mouseX, mouseY, true);
     }
 
     private void drawTab(GuiGraphics g, int index) {
         Tab t = tabs.get(index);
         int[] icon = PanelArt.drawTab(g, tabX(left, index), top, t == tab);
         g.renderItem(t.icon, icon[0], icon[1]);
-        if (t.debug) g.fill(tabX(left, index) + 3, top - TAB_RISE + 2 + (t == tab ? 0 : 3), tabX(left, index) + TAB_W - 3,
-                top - TAB_RISE + 3 + (t == tab ? 0 : 3), 0xFFD04848);
     }
 
     /** The girls' tabs left of the panel: the open one in front of its edge, the others behind it. */
@@ -639,7 +716,7 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
         super.render(g, mouseX, mouseY, partialTick); // background, panels and widgets
         g.drawString(font, title, left + MARGIN, top + 6, LABEL, false);
         Component tabTitle = tab.title();
-        g.drawString(font, tabTitle, left + panelW - MARGIN - font.width(tabTitle), top + 6, tab.debug ? 0xFFB02020 : LABEL, false);
+        g.drawString(font, tabTitle, left + panelW - MARGIN - font.width(tabTitle), top + 6, LABEL, false);
 
         if (!girlEditable()) {
             renderNoGirl(g);
@@ -667,8 +744,9 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
             g.drawString(font, Component.translatable("editor.velvet.unsaved"), left + MARGIN, sy, MUTED, false);
         }
 
+        frame.renderGrip(g, mouseX, mouseY);
         Tab hovered = tabAt(mouseX, mouseY);
-        int row = rowAt(mouseX, mouseY);
+        int row = hasList() ? rowAt(mouseX, mouseY) : -1;
         if (hovered != null) {
             g.renderTooltip(font, hovered.title(), mouseX, mouseY);
         } else if (row == data.girls().size()) {

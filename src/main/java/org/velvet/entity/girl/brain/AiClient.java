@@ -28,13 +28,22 @@ public final class AiClient {
 
     private AiClient() {}
 
-    public record Message(String role, String content) {
+    /** One turn of the conversation; a user turn may come with a picture (JPEG, base64): what she sees. */
+    public record Message(String role, String content, @Nullable String imageJpeg) {
+        public Message(String role, String content) {
+            this(role, content, null);
+        }
+
         public static Message user(String text) {
             return new Message("user", text);
         }
 
         public static Message assistant(String text) {
             return new Message("assistant", text);
+        }
+
+        public Message withImage(@Nullable String jpeg) {
+            return new Message(role, content, jpeg);
         }
     }
 
@@ -61,13 +70,13 @@ public final class AiClient {
         if (provider.protocol == AiProvider.Protocol.ANTHROPIC) {
             body.addProperty("max_tokens", maxTokens);
             body.addProperty("system", system);
-            for (Message m : messages) list.add(message(m.role(), m.content()));
+            for (Message m : messages) list.add(anthropicMessage(m));
             body.add("messages", list);
             request = request(baseUrl + "/messages").header("anthropic-version", ANTHROPIC_VERSION);
             if (key != null) request.header("x-api-key", key);
         } else {
             list.add(message("system", system));
-            for (Message m : messages) list.add(message(m.role(), m.content()));
+            for (Message m : messages) list.add(openAiMessage(m));
             body.add("messages", list);
             // OpenAI's newer models only take max_completion_tokens (and spend some on thinking)
             if (provider == AiProvider.CHATGPT) body.addProperty("max_completion_tokens", Math.max(maxTokens, 1024));
@@ -132,6 +141,42 @@ public final class AiClient {
         if (!"https".equals(scheme) && !"http".equals(scheme)) throw new AiException("bad address: " + url);
         return HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(Config.AI_TIMEOUT_SECONDS.get()))
                 .header("User-Agent", "Velvet");
+    }
+
+    private static JsonObject anthropicMessage(Message m) {
+        if (m.imageJpeg() == null) return message(m.role(), m.content());
+        JsonObject image = new JsonObject();
+        image.addProperty("type", "image");
+        JsonObject source = new JsonObject();
+        source.addProperty("type", "base64");
+        source.addProperty("media_type", "image/jpeg");
+        source.addProperty("data", m.imageJpeg());
+        image.add("source", source);
+        return withParts(m, image);
+    }
+
+    private static JsonObject openAiMessage(Message m) {
+        if (m.imageJpeg() == null) return message(m.role(), m.content());
+        JsonObject image = new JsonObject();
+        image.addProperty("type", "image_url");
+        JsonObject url = new JsonObject();
+        url.addProperty("url", "data:image/jpeg;base64," + m.imageJpeg());
+        image.add("image_url", url);
+        return withParts(m, image);
+    }
+
+    /** The picture first, then the words. */
+    private static JsonObject withParts(Message m, JsonObject image) {
+        JsonObject text = new JsonObject();
+        text.addProperty("type", "text");
+        text.addProperty("text", m.content());
+        JsonArray parts = new JsonArray();
+        parts.add(image);
+        parts.add(text);
+        JsonObject out = new JsonObject();
+        out.addProperty("role", m.role());
+        out.add("content", parts);
+        return out;
     }
 
     private static JsonObject message(String role, String content) {

@@ -43,7 +43,7 @@ public class GirlCollectItemsGoal extends Goal {
     @Override
     public boolean canUse() {
         if (!girl.behavior().pickUpItems || girl.getCurrentAction().isBusy() || girl.shouldBeAtTarget()
-                || girl.isInDanger()) return false;
+                || girl.isInDanger() || org.velvet.entity.girl.psyche.CrisisGuard.crisis()) return false;
         if (--scanTimer > 0) return false;
         scanTimer = SCAN_INTERVAL;
         target = findTarget();

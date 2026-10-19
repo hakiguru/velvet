@@ -21,7 +21,7 @@ public final class GirlRegistry {
     /** NPCs from the spawn egg; what they look like is their preset. */
     public static final DeferredHolder<EntityType<?>, EntityType<NpcEntity>> NPC =
             registerGirl("npc", NpcEntity::new);
-    /** Up to 1.4 every NPC was this one: kept so older worlds still have her (as the Elsie preset). */
+    /** Up to 1.4 every NPC was this one: kept so older worlds still have her (as the Jenny preset). */
     public static final DeferredHolder<EntityType<?>, EntityType<ElsieEntity>> ELSIE =
             registerGirl("elsie", ElsieEntity::new);
 

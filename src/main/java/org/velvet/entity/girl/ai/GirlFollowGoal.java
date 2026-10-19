@@ -42,6 +42,7 @@ public class GirlFollowGoal extends Goal {
         this.speedModifier = speedModifier;
         this.work = new org.velvet.entity.girl.mind.BlockWork(girl);
         this.climber = new org.velvet.entity.girl.survival.BlockClimber(girl);
+        this.parkour = new Parkour(girl);
         this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK, Flag.JUMP));
     }
 
@@ -83,11 +84,17 @@ public class GirlFollowGoal extends Goal {
 
     @Override
     public boolean requiresUpdateEveryTick() {
-        return digging != null || climbing;
+        return digging != null || climbing || parkour.active();
     }
+
+    private final Parkour parkour;
 
     @Override
     public void tick() {
+        if (parkour.active()) {
+            parkour.tick();
+            return;
+        }
         if (climbing) {
             if (climber.tick()) {
                 climbing = false;
@@ -117,6 +124,12 @@ public class GirlFollowGoal extends Goal {
             pathCooldown = 10;
             girl.getNavigation().moveTo(owner, speed);
         }
+        // no way round to him, and a gap right in front of her: she may jump it
+        var way = girl.getNavigation().getPath();
+        if (girl.tickCount % 5 == 0 && dist > 3 && (way == null || !way.canReach() || way.isDone())
+                && parkour.tryStart(owner.position())) {
+            return;
+        }
 
         if (++stuckTimer >= STUCK_CHECK_INTERVAL) {
             stuckTimer = 0;
@@ -127,6 +140,8 @@ public class GirlFollowGoal extends Goal {
             boolean noWay = path == null || !path.canReach() && path.getEndNode() != null
                     && path.getEndNode().asBlockPos().distSqr(owner.blockPosition()) > 4;
             if (moving && !noWay) {
+                stuckCount = 0;
+            } else if (noWay && parkour.tryStart(owner.position())) {
                 stuckCount = 0;
             } else if (unstick()) {
                 stuckCount = 0;
@@ -159,11 +174,19 @@ public class GirlFollowGoal extends Goal {
                 return true;
             }
         }
-        // the block in front of her, towards him, at her feet or head
         Vec3 to = owner.position().subtract(girl.position());
         net.minecraft.core.Direction facing = net.minecraft.core.Direction.getNearest(to.x, 0, to.z);
-        for (BlockPos p : new BlockPos[]{at.relative(facing).above(), at.relative(facing),
-                owner.getY() < girl.getY() - 1.5 ? at.below() : at.above(2)}) {
+        BlockPos front = at.relative(facing);
+        BlockPos[] dig;
+        if (owner.getY() > girl.getY() + 1.5 && !level.getBlockState(front).getCollisionShape(level, front).isEmpty()) {
+            // he's up a wall of natural ground and she has nothing to build with: steps into it, like a player
+            // would cut them: room to jump (over her head), and the two blocks over the step in front of her
+            dig = new BlockPos[]{at.above(2), front.above(), front.above(2)};
+        } else {
+            // the block in front of her, towards him, at her feet or head
+            dig = new BlockPos[]{front.above(), front, owner.getY() < girl.getY() - 1.5 ? at.below() : at.above(2)};
+        }
+        for (BlockPos p : dig) {
             var state = level.getBlockState(p);
             if (state.isAir() || !org.velvet.entity.girl.mind.BlockWork.isBuildingMaterial(level, p, state)) continue;
             if (!org.velvet.entity.girl.mind.BlockWork.inReach(girl, p)) continue;

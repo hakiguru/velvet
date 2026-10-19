@@ -89,6 +89,24 @@ public class GirlDigInGoal extends Goal {
     @Override
     public void tick() {
         timer++;
+        // something got in with her (a baby zombie fits through a one-block hole): fight it, or get out
+        if (stage == Stage.DIG || stage == Stage.COVER || stage == Stage.HIDDEN) {
+            net.minecraft.world.entity.Mob intruder = intruder();
+            if (intruder != null) {
+                if (org.velvet.entity.girl.mind.Gear.isMeleeWeapon(girl.getMainHandItem())) {
+                    girl.getLookControl().setLookAt(intruder);
+                    if (girl.getAttackAnim(0) == 0 && timer % 12 == 0) girl.strike(intruder, false);
+                } else if (stage != Stage.DIG) {
+                    stage = Stage.OPEN;
+                    progress = 0;
+                    brain().digFailed();
+                } else {
+                    stage = Stage.COVER;
+                    timer = 61;
+                }
+                return;
+            }
+        }
         // over the hole, she stays right in the middle of it: on its edge she'd stand on the next block
         if (stage != Stage.WALK) {
             girl.setPos(top.getX() + 0.5, girl.getY(), top.getZ() + 0.5);
@@ -217,6 +235,15 @@ public class GirlDigInGoal extends Goal {
         girl.level().levelEvent(2001, pos, net.minecraft.world.level.block.Block.getId(state)); // break particles and sound
         girl.level().gameEvent(girl, GameEvent.BLOCK_DESTROY, pos);
         return true;
+    }
+
+    /** A monster in the hole with her (or right at its top). */
+    @org.jetbrains.annotations.Nullable
+    private net.minecraft.world.entity.Mob intruder() {
+        var box = new net.minecraft.world.phys.AABB(top).expandTowards(0, -DigSpot.DEPTH, 0).inflate(0.6, 0.5, 0.6);
+        for (var m : girl.level().getEntitiesOfClass(net.minecraft.world.entity.Mob.class, box,
+                m -> m != girl && m.isAlive() && m instanceof net.minecraft.world.entity.monster.Enemy)) return m;
+        return null;
     }
 
     private boolean readyToLeave() {

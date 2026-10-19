@@ -17,7 +17,33 @@ public final class GirlChat {
 
     private GirlChat() {}
 
+    /** What a line is, so her talk settings can let it through or not. */
+    public enum Kind { ANSWER, HELP, HUNGER, HURT, JOY_SELF, JOY_OWNER, EVENT, GREETING, IDLE }
+
+    /** Whether her talk settings let her say this kind of thing. */
+    public static boolean allowed(AbstractGirlEntity girl, Kind kind) {
+        GirlBehavior b = girl.behavior();
+        if (!b.talk) return false;
+        return switch (kind) {
+            case ANSWER -> true;
+            case HELP -> b.callForHelp;
+            case HUNGER -> b.complainHunger && b.chattiness >= 1;
+            case HURT -> b.complainHurt && b.chattiness >= 1;
+            case JOY_SELF -> b.joySelf && b.chattiness >= 1;
+            case JOY_OWNER -> b.joyOwner && b.chattiness >= 1;
+            case EVENT -> b.commentEvents && b.chattiness >= 1;
+            case GREETING -> b.greet && b.chattiness >= 1;
+            case IDLE -> b.chattiness >= 2;
+        };
+    }
+
     public static void say(AbstractGirlEntity girl, Component text) {
+        say(girl, text, Kind.ANSWER);
+    }
+
+    /** Says it, if her talk settings allow this kind of line. */
+    public static void say(AbstractGirlEntity girl, Component text, Kind kind) {
+        if (!allowed(girl, kind)) return;
         MinecraftServer server = girl.getServer();
         if (server == null) return;
         Component name = girl.getName().copy().withStyle(ChatFormatting.LIGHT_PURPLE);

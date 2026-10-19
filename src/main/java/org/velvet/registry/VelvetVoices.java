@@ -71,19 +71,7 @@ public final class VelvetVoices {
             "allie moan 8",
             "allie sadoh 2",
             "allie scawy 3",
-            "allie sigh 2",
-            "galath aaa 2",
-            "galath ahh 8",
-            "galath breathing 7",
-            "galath dialog 6",
-            "galath giggle 4",
-            "galath hmph 3",
-            "galath huh 3",
-            "galath lightcharge 5",
-            "galath moan 8",
-            "galath orgasm 5",
-            "galath strongcharge 4",
-            "galath uuh 7");
+            "allie sigh 2");
 
     private static final Map<String, Map<String, DeferredHolder<SoundEvent, SoundEvent>[]>> VOICES = new HashMap<>();
 

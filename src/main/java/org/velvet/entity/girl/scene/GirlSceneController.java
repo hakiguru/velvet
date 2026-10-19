@@ -1,6 +1,7 @@
 package org.velvet.entity.girl.scene;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -51,6 +52,10 @@ public final class GirlSceneController {
     private static final float FAST_FILL_RATE = 4;
 
     private final AbstractGirlEntity girl;
+    /** The scene being played (from the payment on), server side. */
+    @Nullable private SceneType scene;
+    /** Where she's held during the attached part of a bed scene. */
+    @Nullable private Vec3 pinned;
     @Nullable private SceneType pending;
     @Nullable private BedFinder.Bed bed;
     private int stageTicks;
@@ -73,9 +78,13 @@ public final class GirlSceneController {
             say(player, "busy");
             return;
         }
-        if (type.preset != girl.getGirlType()) return; // her menu only offers her own preset's scenes
+        if (!SceneType.of(girl.getGirlType()).contains(type)) return; // not one hers offers
         if (girl.distanceTo(player) > START_DISTANCE) {
             say(player, "too_far");
+            return;
+        }
+        if (girl.psyche().notInTheMood()) {
+            say(player, "not_in_the_mood");
             return;
         }
         if (!player.onGround()) {
@@ -87,11 +96,12 @@ public final class GirlSceneController {
             return;
         }
         BedFinder.Bed foundBed = null;
-        if (type.needsBed) {
+        SceneType.Place where = type.flow(girl.getGirlType()).place();
+        if (where.bed()) {
             // checked before taking the payment so nothing is lost when there's no bed
-            foundBed = BedFinder.find(girl);
+            foundBed = BedFinder.find(girl, where.spot());
             if (foundBed == null) {
-                say(player, "no_bed");
+                say(player, where.spot() == SceneType.Spot.FOOT ? "no_bed_foot" : "no_bed");
                 return;
             }
         }
@@ -105,6 +115,7 @@ public final class GirlSceneController {
         girl.getNavigation().stop();
         this.bed = foundBed;
         this.pending = type;
+        this.scene = type;
         this.fast = false;
         setProgress(0);
         faceTowards(player.position());
@@ -123,6 +134,8 @@ public final class GirlSceneController {
     /** Ends whatever the girl is doing with a partner. Safe to call at any time. */
     public void stop() {
         pending = null;
+        scene = null;
+        pinned = null;
         bed = null;
         seated = false;
         fast = false;
@@ -171,11 +184,15 @@ public final class GirlSceneController {
         }
         switch (action.bed()) {
             case WALK -> {
-                tickWalkToBed(action, partner);
+                tickWalkToBed(partner);
                 return;
             }
             case CLIMB, WAIT -> {
                 if (!tickOnBed(action, partner)) return;
+                if (action.bed() == GirlAction.Bed.CLIMB && stageTicks >= action.length) {
+                    setStage(action.next() != null ? action.next() : flow().place().waiting());
+                }
+                return;
             }
             default -> {}
         }
@@ -221,17 +238,19 @@ public final class GirlSceneController {
             stop();
             return;
         }
-        if (type.undresses && girl.getModelVariant() != AbstractGirlEntity.VARIANT_NUDE) {
+        if (type.undresses(girl.getGirlType()) && girl.getModelVariant() != AbstractGirlEntity.VARIANT_NUDE) {
             setStage(GirlAction.SCENE_STRIP); // comes back here once she's undressed
             return;
         }
         pending = null;
-        setStage(type.firstStage);
-        if (type.firstStage.bed() == GirlAction.Bed.WALK && bed != null) {
-            // the partner walks along to the bed himself and is seated again once she's waiting on it
+        if (type.needsBed(girl.getGirlType()) && bed != null) {
+            // the partner walks along to the bed himself and is seated again once she's waiting there
+            setStage(GirlAction.BED_WALK);
             girl.ejectPassengers();
             seated = false;
             walkTo(bed.spot());
+        } else {
+            setStage(type.flow(girl.getGirlType()).firstStage());
         }
     }
 
@@ -239,6 +258,7 @@ public final class GirlSceneController {
         GirlAction next = action.next();
         if (next == null || next == GirlAction.NULL) {
             if (action.hasPartner()) { // finished, not aborted
+                girl.psyche().onSceneFinished();
                 girl.addSkillXp(GirlSkill.AFFECTION, SCENE_AFFECTION_XP);
                 girl.addSkillXp(GirlSkill.LUST, SCENE_LUST_XP);
                 girl.addSkillXp(GirlSkill.CAPACITY, SCENE_CAPACITY_XP);
@@ -250,24 +270,39 @@ public final class GirlSceneController {
         }
     }
 
+    /** How the current scene is played on her preset. */
+    private SceneType.Flow flow() {
+        return scene.flow(girl.getGirlType());
+    }
+
     private void setStage(GirlAction action) {
         stageTicks = 0;
         girl.setCurrentAction(action);
     }
 
-    private void tickWalkToBed(GirlAction action, ServerPlayer partner) {
+    private void tickWalkToBed(ServerPlayer partner) {
         if (!bedStillFree(partner)) return;
         BlockPos spot = bed.spot();
         double dx = girl.getX() - (spot.getX() + 0.5);
         double dz = girl.getZ() - (spot.getZ() + 0.5);
         double distSqr = dx * dx + dz * dz;
         if (distSqr < BED_ARRIVE_DISTANCE * BED_ARRIVE_DISTANCE && girl.onGround()) {
-            // stand on the spot facing the bed; the animation itself climbs onto it
-            sceneYaw = bed.toBed().toYRot();
+            SceneType.Place place = flow().place();
             girl.getNavigation().stop();
-            girl.moveTo(spot.getX() + 0.5, spot.getY(), spot.getZ() + 0.5, sceneYaw, 0);
+            if (place.liesDown()) {
+                // into the bed, lying with her head towards the spot, where he'll come to her
+                Vec3 toBed = Vec3.atLowerCornerOf(bed.toBed().getNormal());
+                sceneYaw = bed.toBed().getOpposite().toYRot();
+                pinned = Vec3.atBottomCenterOf(spot).add(toBed.scale(place.forward())).add(0, place.up(), 0);
+                girl.moveTo(pinned.x, pinned.y, pinned.z, sceneYaw, 0);
+            } else {
+                // stand on the spot facing the bed; the animation itself climbs onto it
+                sceneYaw = bed.toBed().toYRot();
+                girl.moveTo(spot.getX() + 0.5, spot.getY(), spot.getZ() + 0.5, sceneYaw, 0);
+            }
             freeze();
-            setStage(action.next()); // climbing onto it
+            // climbing onto it or sitting down on its edge, else waiting right away
+            setStage(place.arrive() != null ? place.arrive() : place.waiting());
             return;
         }
         if (stageTicks > BED_WALK_TIMEOUT) {
@@ -293,11 +328,26 @@ public final class GirlSceneController {
         if (!bedStillFree(partner)) return false;
         if (action.bed() != GirlAction.Bed.WAIT) return true;
 
-        double dx = partner.getX() - girl.getX();
-        double dz = partner.getZ() - girl.getZ();
+        // the spot she came to the bed from (where she still stands, unless she lay down in it)
+        Vec3 spot = Vec3.atBottomCenterOf(bed.spot());
+        double dx = partner.getX() - spot.x;
+        double dz = partner.getZ() - spot.z;
         if (dx * dx + dz * dz < PARTNER_ARRIVE_DISTANCE * PARTNER_ARRIVE_DISTANCE
-                && Math.abs(partner.getY() - girl.getY()) < 0.5 && partner.onGround() && !partner.isPassenger()) {
-            setStage(action.next());
+                && Math.abs(partner.getY() - spot.y) < 0.5 && partner.onGround() && !partner.isPassenger()) {
+            // onto the bed (or its edge) for the attached part
+            SceneType.Place place = flow().place();
+            if (place.liesDown()) {
+                // she's there already
+            } else if (place.alongBed()) {
+                Direction toHead = Direction.fromDelta(bed.head().getX() - bed.foot().getX(), 0, bed.head().getZ() - bed.foot().getZ());
+                pinned = Vec3.atBottomCenterOf(bed.foot()).add(Vec3.atLowerCornerOf(toHead.getNormal()).scale(place.along()));
+                sceneYaw = toHead.toYRot();
+            } else {
+                Vec3 toBed = Vec3.atLowerCornerOf(bed.toBed().getNormal());
+                pinned = girl.position().add(toBed.scale(place.forward())).add(0, place.up(), 0);
+            }
+            girl.moveTo(pinned.x, pinned.y, pinned.z, sceneYaw, 0);
+            setStage(flow().firstStage());
             holdInPlace(partner);
             return false;
         }
@@ -323,10 +373,17 @@ public final class GirlSceneController {
 
     // ---- Positioning ----
 
-    /** Keeps the girl still, facing the scene direction. */
+    /** Keeps the girl still, facing the scene direction (and on the bed where she was put). */
     private void freeze() {
         girl.getNavigation().stop();
-        girl.setDeltaMovement(0, girl.getDeltaMovement().y, 0);
+        GirlAction.Bed role = girl.getCurrentAction().bed();
+        // on the bed for the attached part, or lying in it already while she waits
+        if (pinned != null && (role == GirlAction.Bed.ON || role == GirlAction.Bed.WAIT)) {
+            girl.setDeltaMovement(Vec3.ZERO);
+            if (girl.position().distanceToSqr(pinned) > 1.0E-4) girl.setPos(pinned);
+        } else {
+            girl.setDeltaMovement(0, girl.getDeltaMovement().y, 0);
+        }
         girl.setYRot(sceneYaw);
         girl.setYBodyRot(sceneYaw);
         girl.setYHeadRot(sceneYaw);
@@ -350,31 +407,52 @@ public final class GirlSceneController {
         return true;
     }
 
-    /** Where the partner stands when no animated bone position is known (server, first client frame). */
+    /**
+     * Where the partner is when no animated bone position is known (server, first client frame): as far
+     * ahead of her as the scene has him.
+     */
     public static Vec3 partnerAnchor(AbstractGirlEntity girl) {
-        // in doggy the "steve" bone stands where she climbed onto the bed from: her own position
-        if (isDoggy(girl)) return girl.position();
+        SceneType.Flow type = SceneType.flowOfStage(girl.getCurrentAction());
+        double ahead = type != null ? type.place().partnerAhead() : PARTNER_DISTANCE;
         Vec3 forward = Vec3.directionFromRotation(0, girl.getYRot());
-        return girl.position().add(forward.scale(PARTNER_DISTANCE));
+        return girl.position().add(forward.scale(ahead));
     }
 
-    /** Where the partner stands after the scene: where he stood during it, if that's free. */
+    /**
+     * Where the partner stands after the scene: at a bed, on the spot she came from; elsewhere where he
+     * stood during it. Somewhere free in any case.
+     */
     public static Vec3 dismountPosition(AbstractGirlEntity girl, LivingEntity partner) {
+        SceneType.Flow flow = SceneType.flowOfStage(girl.getCurrentAction());
+        SceneType.Place type = flow == null ? null : flow.place();
+        Vec3 forward = Vec3.directionFromRotation(0, girl.getYRot());
         Vec3 pos;
-        if (isDoggy(girl)) {
-            pos = girl.position();
+        if (type != null && type.liesDown()) {
+            // she lies with her head towards the spot he stood on: back there
+            pos = girl.position().add(forward.scale(type.forward()));
+        } else if (type != null && type.alongBed()) {
+            // she was put in the middle of the bed: he gets up on her side of it
+            Vec3 left = new Vec3(forward.z, 0, -forward.x);
+            pos = girl.position().add(left.scale(1.0));
+        } else if (type != null && type.bed()) {
+            pos = girl.position().subtract(forward.scale(type.forward())).subtract(0, type.up(), 0);
         } else {
-            Vec3 forward = Vec3.directionFromRotation(0, girl.getYRot());
-            pos = girl.position().add(forward.scale(PARTNER_DISTANCE + 0.2));
+            double ahead = type != null ? Math.max(type.partnerAhead(), 0.6) : PARTNER_DISTANCE;
+            pos = girl.position().add(forward.scale(ahead + 0.2));
         }
         return girl.level().noCollision(partner, partner.getBoundingBox().move(pos.subtract(partner.position())))
                 ? pos : girl.position().add(0, girl.getBbHeight(), 0);
     }
 
-    /** The attached part of doggy, played on the bed with the partner standing on her spot. */
-    private static boolean isDoggy(AbstractGirlEntity girl) {
-        GirlAction action = girl.getCurrentAction();
-        return action.isAttached() && action.bed() == GirlAction.Bed.ON;
+    /** The partner faces the way she does (behind her, as in doggy), not towards her. */
+    public static boolean partnerBehind(GirlAction action) {
+        SceneType.Flow type = SceneType.flowOfStage(action);
+        return type != null && type.place().partnerAhead() <= 0.3;
+    }
+
+    /** Dev: the direction the scene is played in. */
+    void faceAlong(float yaw) {
+        sceneYaw = yaw;
     }
 
     private void faceTowards(Vec3 target) {

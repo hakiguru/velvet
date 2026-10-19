@@ -29,7 +29,7 @@ import org.velvet.skin.SkinStore;
  * taken from creative players with the debug tool's editor; empty and -1 otherwise).
  */
 public record SaveGirlEditorPacket(String name, String preset, CompoundTag boneTweaks, String skin, String behaviorJson,
-                                   String settingsJson, int[] skillLevels) implements CustomPacketPayload {
+                                   String settingsJson, int[] skillLevels, String personalityJson) implements CustomPacketPayload {
 
     public static final int MAX_NAME_LENGTH = 32;
 
@@ -45,6 +45,7 @@ public record SaveGirlEditorPacket(String name, String preset, CompoundTag boneT
                 buf.writeUtf(pkt.behaviorJson(), GirlBehavior.MAX_LENGTH * 4);
                 buf.writeUtf(pkt.settingsJson(), GirlBehavior.MAX_LENGTH);
                 buf.writeVarIntArray(pkt.skillLevels());
+                buf.writeUtf(pkt.personalityJson(), GirlBehavior.MAX_LENGTH);
             },
             buf -> {
                 String name = buf.readUtf(MAX_NAME_LENGTH * 4);
@@ -52,7 +53,7 @@ public record SaveGirlEditorPacket(String name, String preset, CompoundTag boneT
                 CompoundTag tweaks = buf.readNbt();
                 return new SaveGirlEditorPacket(name, preset, tweaks == null ? new CompoundTag() : tweaks, buf.readUtf(64),
                         buf.readUtf(GirlBehavior.MAX_LENGTH * 4), buf.readUtf(GirlBehavior.MAX_LENGTH),
-                        buf.readVarIntArray(GirlSkill.values().length));
+                        buf.readVarIntArray(GirlSkill.values().length), buf.readUtf(GirlBehavior.MAX_LENGTH));
             });
 
     @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
@@ -84,11 +85,19 @@ public record SaveGirlEditorPacket(String name, String preset, CompoundTag boneT
 
             String name = StringUtil.filterText(pkt.name()).trim();
             if (name.length() > MAX_NAME_LENGTH) name = name.substring(0, MAX_NAME_LENGTH);
-            girl.setCustomNameString(name);
             GirlType preset = GirlType.byId(pkt.preset());
             if (preset != null && preset != girl.getGirlType()) {
                 girl.setGirlType(preset);
                 if (!preset.strips()) girl.setModelVariant(AbstractGirlEntity.VARIANT_DRESSED);
+            }
+            // names are unique: another NPC's or a player's can't be taken
+            if (org.velvet.entity.girl.Names.taken(player.server, name, girl.getGirlUUID())) {
+                player.sendSystemMessage(Component.translatable("editor.velvet.name_taken", name).withStyle(ChatFormatting.RED));
+            } else {
+                if (name.isEmpty() && girl.getGirlType() != GirlType.UNKNOWN) {
+                    name = org.velvet.entity.girl.Names.freeName(player.server, girl.getGirlType(), girl.getGirlUUID());
+                }
+                girl.setCustomNameString(name);
             }
             if (menu.isDebug() && player.isCreative()) {
                 if (!pkt.settingsJson().isEmpty()) girl.setSettings(NpcSettings.fromJson(pkt.settingsJson()));
@@ -96,6 +105,16 @@ public record SaveGirlEditorPacket(String name, String preset, CompoundTag boneT
                 for (GirlSkill skill : GirlSkill.values()) {
                     if (skill.ordinal() < levels.length && levels[skill.ordinal()] >= 0) girl.setSkillLevel(skill, levels[skill.ordinal()]);
                 }
+                if (!pkt.personalityJson().isEmpty()) {
+                    try {
+                        var json = com.google.gson.JsonParser.parseString(pkt.personalityJson()).getAsJsonObject();
+                        girl.psyche().setPersonality(org.velvet.entity.girl.psyche.Personality.fromJson(json, girl.getRandom()));
+                        org.velvet.entity.girl.psyche.PsycheStore.write(girl.getGirlUUID(), girl.psyche());
+                    } catch (RuntimeException ignored) {
+                        // a broken one changes nothing
+                    }
+                }
+                girl.writeSettings();
             }
             girl.setBoneTweaks(BoneTweaks.fromTag(pkt.boneTweaks()));
             girl.setSkin(skin);

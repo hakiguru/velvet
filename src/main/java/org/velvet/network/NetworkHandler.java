@@ -20,7 +20,7 @@ public final class NetworkHandler {
     }
 
     private static void onRegister(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar r = event.registrar(Velvet.MODID).versioned("4");
+        PayloadRegistrar r = event.registrar(Velvet.MODID).versioned("5");
 
         // --- C2S ---
         r.playToServer(SetFollowingPacket.TYPE,       SetFollowingPacket.STREAM_CODEC,       SetFollowingPacket::handle);
@@ -38,11 +38,15 @@ public final class NetworkHandler {
         r.playToServer(SetOutfitPacket.TYPE,          SetOutfitPacket.STREAM_CODEC,          SetOutfitPacket::handle);
         r.playToServer(SetClothingPacket.TYPE,        SetClothingPacket.STREAM_CODEC,        SetClothingPacket::handle);
         r.playToServer(CreateNpcPacket.TYPE,          CreateNpcPacket.STREAM_CODEC,          CreateNpcPacket::handle);
+        r.playToServer(EditorNpcActionPacket.TYPE,    EditorNpcActionPacket.STREAM_CODEC,    EditorNpcActionPacket::handle);
+        r.playToServer(PresetActionPacket.TYPE,       PresetActionPacket.STREAM_CODEC,       PresetActionPacket::handle);
+        r.playToServer(EyesImagePacket.TYPE,          EyesImagePacket.STREAM_CODEC,          EyesImagePacket::handle);
 
         // --- both directions (handlers branch on ctx.flow()) ---
         r.playToClient(GirlChatPacket.TYPE, GirlChatPacket.STREAM_CODEC, GirlChatPacket::handle);
         r.playBidirectional(SetCustomModelPacket.TYPE, SetCustomModelPacket.STREAM_CODEC, SetCustomModelPacket::handle);
         r.playBidirectional(SkinChunkPacket.TYPE, SkinChunkPacket.STREAM_CODEC, SkinChunkPacket::handle);
+        r.playBidirectional(PresetFilePacket.TYPE, PresetFilePacket.STREAM_CODEC, PresetFilePacket::handle);
         r.playBidirectional(ChunkedModelDataPacket.TYPE, ChunkedModelDataPacket.STREAM_CODEC, ChunkedModelDataPacket::handle);
 
         // --- S2C ---
@@ -53,6 +57,8 @@ public final class NetworkHandler {
         r.playToClient(SkinUploadResultPacket.TYPE,   SkinUploadResultPacket.STREAM_CODEC,   SkinUploadResultPacket::handle);
         r.playToClient(HornyMeterPacket.TYPE,         HornyMeterPacket.STREAM_CODEC,         HornyMeterPacket::handle);
         r.playToClient(EditorDataPacket.TYPE,         EditorDataPacket.STREAM_CODEC,         EditorDataPacket::handle);
+        r.playToClient(PresetListPacket.TYPE,         PresetListPacket.STREAM_CODEC,         PresetListPacket::handle);
+        r.playToClient(EyesRequestPacket.TYPE,        EyesRequestPacket.STREAM_CODEC,        EyesRequestPacket::handle);
     }
 
     public static void sendToServer(CustomPacketPayload payload) {

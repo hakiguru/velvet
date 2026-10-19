@@ -7,6 +7,6 @@ import org.velvet.entity.girl.GirlType;
 
 public class ElsieEntity extends AbstractGirlEntity {
     public ElsieEntity(EntityType<? extends ElsieEntity> type, Level level) {
-        super(type, level, GirlType.ELSIE);
+        super(type, level, GirlType.JENNY);
     }
 }

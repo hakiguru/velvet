@@ -31,6 +31,9 @@ public final class EditorState {
     public final boolean debug;
     public org.velvet.entity.girl.NpcSettings settings;
     public final int[] skillLevels;
+    /** Debug tool only: her character (null: not changed, so not sent). */
+    @Nullable public org.velvet.entity.girl.psyche.Personality personality;
+    public boolean personalityChanged;
     public boolean dirty;
 
     /** The stand-in drawn in the model view, or null without a girl. */

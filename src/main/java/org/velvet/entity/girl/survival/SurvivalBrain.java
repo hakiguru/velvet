@@ -62,7 +62,9 @@ public final class SurvivalBrain {
 
     public enum Tactic { NONE, STEALTH, FLEE, FIGHT, SHELTER, PILLAR, DIG_IN, EXTINGUISH }
 
-    private static final int THINK_INTERVAL = 10;
+    /** How often she thinks it over: four times a second, every other tick under adrenaline. */
+    private static final int THINK_INTERVAL = 5;
+    private static final int ALERT_THINK_INTERVAL = 2;
     /** She fights only when they'd need this many times longer to kill her than she needs for them. */
     private static final double FIGHT_MARGIN = 1.6;
     /** Already fighting she keeps at it unless it's clearly lost. */
@@ -133,7 +135,8 @@ public final class SurvivalBrain {
     public void tick() {
         threats.tick();
         senses.tick();
-        if (girl.tickCount % THINK_INTERVAL != 0) return;
+        int interval = girl.psyche().adrenaline() >= 0.3F ? ALERT_THINK_INTERVAL : THINK_INTERVAL;
+        if (girl.tickCount % interval != 0) return;
         org.velvet.entity.girl.NpcSettings b = girl.settings();
         long now = girl.level().getGameTime();
         if (girl.tickCount % STEALTH_CHECK_INTERVAL == 0) stealthPlace = isStealthPlace();
@@ -196,8 +199,13 @@ public final class SurvivalBrain {
         if (warden != null && !warden.hunting && stealthy && (worst == warden || !hunted)) return Tactic.STEALTH;
 
         float health = girl.getHealth() / girl.getMaxHealth();
+        // a creeper alone isn't a fight of strength: hit and back off (her odds count its blast as damage)
+        if (b.survival && b.fightBack && worst.kind == Threats.Kind.EXPLOSIVE && canFight(worst)
+                && threats.within(16).size() == 1) {
+            return Tactic.FIGHT;
+        }
         if (b.survival && b.fightBack && canFight(worst) && health > FIGHT_MIN_HEALTH
-                && fightOdds() > (tactic == Tactic.FIGHT ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN)) {
+                && fightOdds() > (tactic == Tactic.FIGHT ? KEEP_FIGHTING_MARGIN : FIGHT_MARGIN) * girl.psyche().fightMargin()) {
             return Tactic.FIGHT;
         }
         if (!girl.behavior().fleeMonsters) return Tactic.NONE;
@@ -216,7 +224,10 @@ public final class SurvivalBrain {
 
     /** Melee and ranged monsters; creepers only with a weapon that kills one in a few hits. */
     private boolean canFight(Threats.Threat t) {
-        if (t.kind == Threats.Kind.EXPLOSIVE) return org.velvet.entity.girl.mind.Gear.attackDamage(girl.getMainHandItem()) >= 6;
+        // a creeper: hit and back off, shield up when it hisses; not when she's already badly hurt
+        if (t.kind == Threats.Kind.EXPLOSIVE) return girl.getHealth() > girl.getMaxHealth() * 0.5F
+                && (org.velvet.entity.girl.mind.Gear.isMeleeWeapon(girl.getMainHandItem())
+                    || org.velvet.entity.girl.mind.Gear.find(girl, org.velvet.entity.girl.mind.Gear::isMeleeWeapon) >= 0 || hasShieldItem());
         return t.kind == Threats.Kind.MELEE || t.kind == Threats.Kind.RANGED;
     }
 
@@ -248,6 +259,11 @@ public final class SurvivalBrain {
         double timeToDie = myHealth / (enemyDps * (1 - armor) * (shield && girl.settings().useShield ? 0.55 : 1));
         double timeToKill = enemyHealth / Math.max(0.5, myDps);
         return timeToDie / timeToKill;
+    }
+
+    private boolean hasShieldItem() {
+        return org.velvet.entity.girl.mind.Gear.isShield(girl.getOffhandItem())
+                || org.velvet.entity.girl.mind.Gear.find(girl, org.velvet.entity.girl.mind.Gear::isShield) >= 0;
     }
 
     /** Health she could get back mid-fight: golden apples, healing potions, a totem. */
@@ -282,6 +298,12 @@ public final class SurvivalBrain {
     /** Not from a warden (its sonic boom goes through the ground) or the wither, and only where she may dig. */
     private boolean canDigIn(Threats.Threat worst) {
         if (worst.kind == Threats.Kind.APEX) return false;
+        for (Threats.Threat t : threats.within(10)) {
+            // a baby zombie, a cave spider, a silverfish: they'd come down the hole after her; and anything
+            // right on her heels sees where she went
+            if (t.entity.getBbHeight() < 1.0F || t.entity.getBbWidth() < 0.7F && t.entity.getBbHeight() < 1.5F) return false;
+            if (t.distanceTo(girl.position()) < 2.5) return false;
+        }
         return EventHooks.canEntityGrief(girl.level(), girl) && DigSpot.find(girl, 4) != null;
     }
 
@@ -450,13 +472,19 @@ public final class SurvivalBrain {
                 lastHelp = now;
                 BlockPos p = girl.blockPosition();
                 Component where = Component.literal(p.getX() + " " + p.getY() + " " + p.getZ());
-                String need = !armed ? "weapon" : health < 0.5F ? "hurt" : "generic";
-                GirlChat.say(girl, Component.translatable("chat.velvet.help." + need, worst.entity.getName(), where));
+                // under adrenaline she doesn't feel her wounds: she just calls for help
+                String need = !armed ? "weapon" : health < 0.5F && !girl.psyche().survivalOnly() ? "hurt" : "generic";
+                GirlChat.say(girl, Component.translatable("chat.velvet.help." + need, worst.entity.getName(), where),
+                        need.equals("hurt") ? GirlChat.Kind.HURT : GirlChat.Kind.HELP);
             }
         }
-        if (!hunted && girl.getFood() <= 6 && !hasFood() && now - lastHungerHelp > HUNGER_HELP_COOLDOWN) {
+        // told to say everything, she mentions it early, while there's still time to bring her something
+        boolean early = girl.behavior().chattiness >= 3;
+        if (!hunted && !girl.psyche().survivalOnly() && girl.getFood() <= (early ? 12 : 6) && !hasFood()
+                && now - lastHungerHelp > HUNGER_HELP_COOLDOWN) {
             lastHungerHelp = now;
-            GirlChat.say(girl, Component.translatable("chat.velvet.help.hungry"));
+            GirlChat.say(girl, Component.translatable(girl.getFood() > 6 ? "chat.velvet.help.hungry_soon" : "chat.velvet.help.hungry"),
+                    GirlChat.Kind.HUNGER);
         }
     }
 
@@ -470,7 +498,7 @@ public final class SurvivalBrain {
     public void announceHidden() {
         BlockPos p = girl.blockPosition();
         GirlChat.say(girl, Component.translatable("chat.velvet.help.hidden",
-                Component.literal(p.getX() + " " + p.getY() + " " + p.getZ())));
+                Component.literal(p.getX() + " " + p.getY() + " " + p.getZ())), GirlChat.Kind.HELP);
     }
 
     // ---- Inventory helpers ----

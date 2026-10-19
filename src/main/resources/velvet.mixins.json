@@ -3,9 +3,12 @@
   "minVersion": "0.8",
   "package": "org.velvet.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [],
+  "mixins": [
+    "SlotAccessor"
+  ],
   "client": [
-    "CameraMixin"
+    "CameraMixin",
+    "MinecraftAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -2,7 +2,7 @@ package org.velvet;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-/** config/velvet-common.toml. */
+/** config/velvet/common.toml. */
 public final class Config {
     private Config() {}
 
@@ -41,6 +41,39 @@ public final class Config {
     public static final ModConfigSpec.IntValue AI_COOLDOWN_SECONDS = BUILDER
             .comment("Least time between two requests of one NPC.")
             .defineInRange("cooldownSeconds", 3, 0, 120);
+
+    public static final ModConfigSpec.IntValue AI_AUTONOMY_SECONDS = BUILDER
+            .comment("With autonomy on (her AI tab), how often the model decides what she does when nothing's going on.",
+                    "Each time is one request: higher is cheaper.")
+            .defineInRange("autonomySeconds", 90, 20, 3600);
+
+    public static final ModConfigSpec.IntValue AI_EVENT_COOLDOWN_SECONDS = BUILDER
+            .comment("Least time between two of her comments on things happening on the server (advancements, deaths, players",
+                    "coming and going). Her owner's messages are always answered.")
+            .defineInRange("eventCooldownSeconds", 60, 0, 3600);
+
+    static {
+        BUILDER.pop();
+        BUILDER.comment("Her voice in Simple Voice Chat (if that mod is installed): she hears players talking near her and",
+                "answers out loud, when switched on in her behavior (\"voice\"). Speech goes through an OpenAI-compatible",
+                "speech service with her owner's ChatGPT key.").push("voice");
+    }
+
+    public static final ModConfigSpec.ConfigValue<String> VOICE_URL = BUILDER
+            .comment("The speech service, up to the version.")
+            .define("url", "https://api.openai.com/v1");
+
+    public static final ModConfigSpec.ConfigValue<String> VOICE_STT_MODEL = BUILDER
+            .comment("Speech to text model.")
+            .define("listenModel", "gpt-4o-mini-transcribe");
+
+    public static final ModConfigSpec.ConfigValue<String> VOICE_TTS_MODEL = BUILDER
+            .comment("Text to speech model.")
+            .define("speakModel", "gpt-4o-mini-tts");
+
+    public static final ModConfigSpec.DoubleValue VOICE_DISTANCE = BUILDER
+            .comment("How far she hears and is heard, in blocks.")
+            .defineInRange("distance", 16.0, 2.0, 64.0);
 
     static {
         BUILDER.pop();

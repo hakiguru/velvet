@@ -21,3 +21,7 @@ run
 
 # Reference material: original mod, Minecraft jar, notes (not part of the project)
 reference/
+
+# Local dev probe (dev.gradle, dev/)
+dev.gradle
+dev/

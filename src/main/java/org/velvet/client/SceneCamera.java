@@ -76,7 +76,7 @@ public final class SceneCamera {
      * in doggy he stands behind her, facing the same way she does), looking a little down.
      */
     private static void lookAlongPartnerBody(Minecraft mc, AbstractGirlEntity g) {
-        boolean behindHer = g.getCurrentAction().name().startsWith("DOGGY");
+        boolean behindHer = org.velvet.entity.girl.scene.GirlSceneController.partnerBehind(g.getCurrentAction());
         float yaw = g.getYRot() + (behindHer ? 0 : 180);
         mc.player.setYRot(yaw);
         mc.player.setYHeadRot(yaw);
@@ -124,7 +124,7 @@ public final class SceneCamera {
         Vec3 focus = g.clientSceneFocus;
         if (focus == null) {
             // not rendered yet: between her and the partner, who stands right behind her in doggy, in front otherwise
-            double towardsPartner = g.getCurrentAction().name().startsWith("DOGGY") ? 0.2 : 0.6;
+            double towardsPartner = org.velvet.entity.girl.scene.GirlSceneController.partnerBehind(g.getCurrentAction()) ? 0.2 : 0.6;
             focus = g.getPosition(partialTick).add(forward.scale(towardsPartner)).add(0, FOCUS_HEIGHT, 0);
         }
 

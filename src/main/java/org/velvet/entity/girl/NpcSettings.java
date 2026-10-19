@@ -17,17 +17,21 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * Settings of one NPC that players don't change in the editor: her instincts and the debug switches. Each NPC
- * has her own file, {@code <world>/velvet/npcs/<her id>.json}, written the first time she's loaded; it can be
- * edited by hand (read again whenever she's loaded) or with the debug tool. Keys this version doesn't know
- * are kept.
+ * Settings of one NPC that players don't change in the editor: her instincts and the debug switches, and a copy
+ * of the rest the debug tool sets (her levels and her character; her name and preset just to tell the files
+ * apart). Each NPC has her own file, {@code config/velvet/npcs/<her id>.json}, written whenever she's saved; it
+ * can be edited by hand while the world is closed (read again whenever she's loaded) or with the debug tool.
+ * Keys this version doesn't know are kept. Her character also has a file of its own (with her emotions), see
+ * {@link org.velvet.entity.girl.psyche.PsycheStore}: whichever of the two was changed last wins.
  * <pre>
  * {
  *   "self_preservation": { "enabled": true, "fight_back": true, "stealth": true, "dig_in": true,
  *                          "pillar_up": true, "shelter": true, "gather_blocks": true, "mine_ores": true,
  *                          "use_shield": true, "use_items": true, "ask_for_help": true },
  *   "debug": { "ai": true, "damage_from_players": true, "invulnerable": false },
- *   "character": { }
+ *   "npc": { "name": "Jenny", "preset": "jenny" },
+ *   "levels": { "capacity": 2, "endurance": 0, ... },
+ *   "personality": { "sociability": 0.62, ... }
  * }
  * </pre>
  */
@@ -65,7 +69,21 @@ public final class NpcSettings {
     public boolean damageFromPlayers = true;
     public boolean invulnerable = false;
 
+    // ---- the rest of what the debug editor sets, kept here too to see and change by hand ----
+    /** Who she is, for whoever opens the file (not read back). */
+    public String name = "", preset = "";
+    /** Her skill levels by skill id; -1 for one the file doesn't give. */
+    public final int[] levels = filledLevels();
+    /** Her character, trait id to 0.01..1.00; null if the file doesn't give it. */
+    @Nullable public JsonObject personality;
+
     private JsonObject extra = new JsonObject();
+
+    private static int[] filledLevels() {
+        int[] l = new int[GirlSkill.values().length];
+        java.util.Arrays.fill(l, -1);
+        return l;
+    }
 
     public JsonObject toJsonObject() {
         JsonObject json = extra.deepCopy();
@@ -85,7 +103,16 @@ public final class NpcSettings {
         d.addProperty("ai", ai);
         d.addProperty("damage_from_players", damageFromPlayers);
         d.addProperty("invulnerable", invulnerable);
-        object(json, "character");
+        // her character used to have a placeholder here; it has its own file now
+        json.remove("character");
+        JsonObject who = object(json, "npc");
+        who.addProperty("name", name);
+        who.addProperty("preset", preset);
+        JsonObject l = object(json, "levels");
+        for (GirlSkill skill : GirlSkill.values()) {
+            if (levels[skill.ordinal()] >= 0) l.addProperty(skill.name().toLowerCase(java.util.Locale.ROOT), levels[skill.ordinal()]);
+        }
+        if (personality != null) json.add("personality", personality.deepCopy());
         return json;
     }
 
@@ -116,6 +143,18 @@ public final class NpcSettings {
             n.damageFromPlayers = bool(d, "damage_from_players", n.damageFromPlayers);
             n.invulnerable = bool(d, "invulnerable", n.invulnerable);
         }
+        JsonObject l = child(json, "levels");
+        if (l != null) {
+            for (GirlSkill skill : GirlSkill.values()) {
+                String key = skill.name().toLowerCase(java.util.Locale.ROOT);
+                try {
+                    if (l.has(key)) n.levels[skill.ordinal()] = Math.clamp(l.get(key).getAsInt(), 0, GirlSkill.MAX_LEVEL);
+                } catch (RuntimeException ignored) {
+                    // not a number: left as it is
+                }
+            }
+        }
+        n.personality = child(json, "personality");
         n.extra = json.deepCopy();
         return n;
     }
@@ -138,6 +177,11 @@ public final class NpcSettings {
     // ---- files ----
 
     public static Path file(MinecraftServer server, UUID girl) {
+        return org.velvet.VelvetPaths.npc(girl);
+    }
+
+    /** Where 1.5 kept them: in the world's folder. */
+    private static Path oldFile(MinecraftServer server, UUID girl) {
         return server.getWorldPath(LevelResource.ROOT).resolve(Velvet.MODID).resolve("npcs").resolve(girl + ".json");
     }
 
@@ -145,6 +189,7 @@ public final class NpcSettings {
     @Nullable
     public static NpcSettings read(MinecraftServer server, UUID girl) {
         Path file = file(server, girl);
+        if (!Files.isRegularFile(file)) file = oldFile(server, girl);
         if (!Files.isRegularFile(file)) return null;
         try {
             return fromJson(Files.readString(file, StandardCharsets.UTF_8));

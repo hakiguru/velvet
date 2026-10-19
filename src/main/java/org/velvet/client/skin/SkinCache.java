@@ -99,7 +99,7 @@ public final class SkinCache {
 
     private static void register(String hash, byte[] data, Entry e) {
         try {
-            NativeImage image = NativeImage.read(data);
+            NativeImage image = NativeImage.read(new java.io.ByteArrayInputStream(data));
             ResourceLocation id = ResourceLocation.fromNamespaceAndPath(Velvet.MODID, "skins/" + hash);
             Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(image));
             e.texture = id;

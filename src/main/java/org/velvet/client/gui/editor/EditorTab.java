@@ -32,6 +32,9 @@ public interface EditorTab {
 
     default void onHide() {}
 
+    /** "Save" was pressed: put anything still being worked on into what's saved. */
+    default void beforeSave() {}
+
     default void tick() {}
 
     default boolean mouseClicked(double x, double y, int button) {

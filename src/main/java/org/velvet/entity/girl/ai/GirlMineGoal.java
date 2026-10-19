@@ -16,7 +16,8 @@ import org.velvet.entity.girl.survival.SurvivalBrain;
 import java.util.EnumSet;
 
 /**
- * Mining while it's quiet, like a player out with a pickaxe: ores she sees (when she has a tool that gets
+ * Mining when her owner tells her to (/mine, /gather, or in so many words), like a player out with a pickaxe:
+ * never on her own, she isn't to dig the place up. Ores she sees (when she has a tool that gets
  * something out of them), and natural ground to build with when she has fewer than {@link #ENOUGH_BLOCKS}
  * blocks (for pillars and shelters). Only close to her owner when she follows him, never with monsters
  * around, and only where the mobGriefing rule allows.
@@ -49,20 +50,22 @@ public class GirlMineGoal extends Goal {
             cooldown--;
             return false;
         }
-        if (!quiet()) return false;
+        // she only breaks blocks when told to (or to save herself, which her survival goals do)
+        if (girl.miningOrder() == 0 || !quiet()) return false;
         target = pick();
         return target != null;
     }
 
     @Override
     public boolean canContinueToUse() {
-        return target != null && timer < GIVE_UP_AFTER && quiet() && !girl.level().getBlockState(target).isAir();
+        return target != null && timer < GIVE_UP_AFTER && girl.miningOrder() > 0 && quiet() && !girl.level().getBlockState(target).isAir();
     }
 
     /** Nothing after her, nothing she's doing, and her owner (if she follows him) close by. */
     private boolean quiet() {
         if (girl.getCurrentAction().isBusy() || girl.survival().tactic() != SurvivalBrain.Tactic.NONE || girl.isInDanger()
-                || girl.isUsingItem() || girl.shouldBeAtTarget() || !BlockWork.mayGrief(girl) || !girl.settings().ai) return false;
+                || girl.isUsingItem() || girl.shouldBeAtTarget() || !BlockWork.mayGrief(girl) || !girl.settings().ai
+                || girl.psyche().survivalOnly() || org.velvet.entity.girl.psyche.CrisisGuard.crisis()) return false;
         if (!girl.survival().threats().isEmpty()) return false;
         if (girl.isFollowing() && girl.getOwnerUUID() != null) {
             Player owner = girl.level().getPlayerByUUID(girl.getOwnerUUID());
@@ -75,7 +78,7 @@ public class GirlMineGoal extends Goal {
     private BlockPos pick() {
         var settings = girl.settings();
         int order = girl.miningOrder();
-        if (settings.mineOres || order == 1) {
+        if (settings.mineOres && order == 1) {
             for (BlockPos p : girl.survival().senses().ores()) {
                 if (worthIt(p)) {
                     ore = true;
@@ -84,7 +87,7 @@ public class GirlMineGoal extends Goal {
             }
         }
         int enough = order == 2 ? GATHER_UP_TO : ENOUGH_BLOCKS;
-        if ((settings.gatherBlocks || order == 2) && girl.survival().countBuildingBlocks() < enough) {
+        if (settings.gatherBlocks && order == 2 && girl.survival().countBuildingBlocks() < enough) {
             for (BlockPos p : girl.survival().senses().material()) {
                 if (Vec3.atCenterOf(p).distanceTo(girl.getEyePosition()) > BlockWork.REACH + 2) continue;
                 BlockState state = girl.level().getBlockState(p);

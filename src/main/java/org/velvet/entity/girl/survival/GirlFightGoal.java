@@ -253,27 +253,62 @@ public class GirlFightGoal extends Goal {
         return Gear.isShield(girl.getOffhandItem()) || Gear.find(girl, Gear::isShield) >= 0;
     }
 
-    /** Hit and step back; away when it hisses. */
+    /** After a hit on a creeper: backing away for this many ticks before going in again. */
+    private int creeperRetreat;
+
+    /**
+     * Creepers the way players fight them: run in, a sprinting hit (it knocks it back), straight back out
+     * before it can blow; when it hisses, away out of its range, or, if it's too close for that and she has a
+     * shield, shield up towards it (a raised shield takes the blast).
+     */
     private void tickCreeper(Creeper creeper, double dist, boolean ready) {
+        boolean hissing = creeper.getSwellDir() > 0;
+        if (hissing) {
+            creeperRetreat = 0;
+            girl.lookAt(creeper, 60, 60);
+            if (dist < 3.2 && hasShield() && girl.settings().useShield) {
+                // can't get away in time: take it on the shield, facing it
+                girl.getNavigation().stop();
+                if (!Gear.isShield(girl.getOffhandItem())) Gear.holdShield(girl);
+                if (!blocking && Gear.isShield(girl.getOffhandItem())) {
+                    girl.startUsingItem(InteractionHand.OFF_HAND);
+                    blocking = true;
+                }
+                girl.getMoveControl().strafe(-0.4F, 0);
+            } else {
+                if (blocking) {
+                    girl.stopUsingItem();
+                    blocking = false;
+                }
+                // out of its blast (it gives up past seven blocks)
+                girl.setSprinting(true);
+                girl.setMode(GirlMode.RUN);
+                backOff(1.8);
+            }
+            return;
+        }
         if (blocking) {
             girl.stopUsingItem();
             blocking = false;
         }
-        if (creeper.getSwellDir() > 0 && dist < 5) {
-            girl.getNavigation().stop();
-            backOff(1.6);
+        if (creeperRetreat > 0) {
+            creeperRetreat--;
             girl.setMode(GirlMode.RUN);
+            backOff(1.6);
             return;
         }
         if (ready) {
             approach(dist);
+            girl.setSprinting(dist > 1.5);
             if (dist <= REACH && girl.hasLineOfSight(creeper)) {
                 jumpTicks = -1;
                 if (girl.strike(creeper, false)) girl.addSkillXp(GirlSkill.WEAPONS, 1);
                 sinceAttack = 0;
+                girl.setSprinting(false);
+                creeperRetreat = 14;
             }
         } else {
-            hold(Math.max(dist, 4));
+            hold(Math.max(dist, 4.5));
         }
     }
 

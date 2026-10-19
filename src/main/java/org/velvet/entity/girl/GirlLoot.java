@@ -39,6 +39,10 @@ public final class GirlLoot {
         if (!rest.isEmpty()) rest = swapForLowerCaste(girl, rest, LootContext.of(girl));
         int taken = before - rest.getCount();
         if (taken <= 0) return;
+        // thrown to her by a player: a gift (her own drops she picks up again are none)
+        if (entity.getOwner() instanceof net.minecraft.world.entity.player.Player giver) {
+            girl.psyche().onGift(stack, giver.getUUID().equals(girl.getOwnerUUID()));
+        }
         girl.take(entity, taken); // the pickup animation for everyone around
         stack.shrink(taken);
         if (stack.isEmpty()) entity.discard();

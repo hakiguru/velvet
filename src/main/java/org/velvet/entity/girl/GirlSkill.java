@@ -15,17 +15,14 @@ package org.velvet.entity.girl;
  *   <li>WEAPONS: hits she lands on monsters (critical ones count double); she shoots straighter with it.</li>
  *   <li>BUILDING: blocks she places (pillars, shelters, steps).</li>
  *   <li>TOOLS: blocks she mines, ores the most.</li>
- *   <li>The rest have no way to grow yet: they come with the activities they're about (fighting, building,
- *       crafting...).</li>
  * </ul>
+ * How kind or quick to anger she is isn't a skill: that's her character (see {@link Personality}).
  */
 public enum GirlSkill {
     ENDURANCE(0xFFD04848, true),
     AFFECTION(0xFFE0609A, true),
     LUST(0xFFB04CD8, true),
     CAPACITY(0xFFC8963C, true),
-    KINDNESS(0xFF5CC878, false),
-    AGGRESSION(0xFF8C2A2A, false),
     BUILDING(0xFF9C7A54, true),
     WEAPONS(0xFF9AA4B4, true),
     TOOLS(0xFF4C8CA8, true),

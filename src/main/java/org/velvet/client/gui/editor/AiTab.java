@@ -41,13 +41,34 @@ import static org.velvet.client.gui.PanelArt.*;
  *       server, never shown again), the address for local ones and the model, from a list loaded from the
  *       service itself.</li>
  *   <li>Prompt: who she is, for the language models: her character, how she talks.</li>
+ *   <li>Talk: whether she may speak at all, how much, and what about (and what the language models hear and
+ *       do for her).</li>
  * </ul>
  * Her survival instincts aren't here: they're always on, set per NPC in her settings file (or with the
  * debug tool).
  */
 public final class AiTab implements EditorTab {
 
-    private enum Part { BRAIN, PROMPT }
+    private enum Part { BRAIN, PROMPT, TALK }
+
+    /** A switch of the talk part: its name, how it reads and changes, and whether it needs her to speak at all. */
+    private record Switch(String key, java.util.function.Predicate<GirlBehavior> get,
+                          java.util.function.BiConsumer<GirlBehavior, Boolean> set, boolean needsTalk) {}
+
+    private static final List<Switch> SWITCHES = List.of(
+            new Switch("talk", b -> b.talk, (b, v) -> b.talk = v, false),
+            new Switch("complain_hunger", b -> b.complainHunger, (b, v) -> b.complainHunger = v, true),
+            new Switch("complain_hurt", b -> b.complainHurt, (b, v) -> b.complainHurt = v, true),
+            new Switch("call_for_help", b -> b.callForHelp, (b, v) -> b.callForHelp = v, true),
+            new Switch("joy_self", b -> b.joySelf, (b, v) -> b.joySelf = v, true),
+            new Switch("joy_owner", b -> b.joyOwner, (b, v) -> b.joyOwner = v, true),
+            new Switch("greet", b -> b.greet, (b, v) -> b.greet = v, true),
+            new Switch("comment_events", b -> b.commentEvents, (b, v) -> b.commentEvents = v, true),
+            new Switch("hear_all", b -> b.hearAll, (b, v) -> b.hearAll = v, false),
+            new Switch("autonomy", b -> b.autonomy, (b, v) -> b.autonomy = v, false),
+            new Switch("vision", b -> b.vision, (b, v) -> b.vision = v, false),
+            new Switch("voice_listen", b -> b.voiceListen, (b, v) -> b.voiceListen = v, false),
+            new Switch("voice_speak", b -> b.voiceSpeak, (b, v) -> b.voiceSpeak = v, true));
 
     private static final int LIST_W = 104, ROW = 16, GAP = 6, PART_H = 14;
 
@@ -66,6 +87,9 @@ public final class AiTab implements EditorTab {
     private final Map<AiProvider, String> endpointDraft = new EnumMap<>(AiProvider.class);
     private final Map<AiProvider, List<AbstractWidget>> pageWidgets = new EnumMap<>(AiProvider.class);
     private final List<AbstractWidget> promptWidgets = new ArrayList<>();
+    private final List<AbstractWidget> talkWidgets = new ArrayList<>();
+    private final Map<Switch, Button> switchButtons = new java.util.LinkedHashMap<>();
+    private Button chattinessButton;
     private final Set<AiProvider> loading = EnumSet.noneOf(AiProvider.class);
     private int modelScroll;
     private EditBox modelBox;
@@ -98,10 +122,13 @@ public final class AiTab implements EditorTab {
         this.partY = y;
         pageWidgets.clear();
         promptWidgets.clear();
+        talkWidgets.clear();
+        switchButtons.clear();
         for (AiProvider p : AiProvider.values()) pageWidgets.put(p, new ArrayList<>());
         initInternal();
         for (AiProvider p : AiProvider.values()) if (p.isExternal()) initProvider(p);
         initPrompt();
+        initTalk();
     }
 
     private int partY;
@@ -217,6 +244,48 @@ public final class AiTab implements EditorTab {
         promptWidgets.add(persona);
     }
 
+    // ---- Talk ----
+
+    private void initTalk() {
+        int colW = (w - 4) / 2;
+        int row = 0;
+        chattinessButton = host.add(Button.builder(Component.empty(), b -> {
+            behavior().chattiness = (behavior().chattiness + 1) % 4;
+            changed();
+            syncTalk();
+        }).bounds(x, y + 12, w, 16).build());
+        talkWidgets.add(chattinessButton);
+        for (Switch sw : SWITCHES) {
+            int col = row % 2, line = row / 2;
+            Button button = host.add(Button.builder(Component.empty(), b -> {
+                sw.set().accept(behavior(), !sw.get().test(behavior()));
+                changed();
+                syncTalk();
+            }).bounds(x + col * (colW + 4), y + 32 + line * 18, colW, 16)
+                    .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                            Component.translatable("editor.velvet.talk." + sw.key() + ".tip"))).build());
+            switchButtons.put(sw, button);
+            talkWidgets.add(button);
+            row++;
+        }
+        syncTalk();
+    }
+
+    /** The talk part's buttons as the settings are now: on or off, and greyed when she may not speak at all. */
+    private void syncTalk() {
+        GirlBehavior b = behavior();
+        chattinessButton.setMessage(Component.translatable("editor.velvet.talk.chattiness",
+                Component.translatable("editor.velvet.talk.chattiness." + b.chattiness)));
+        chattinessButton.active = b.talk;
+        switchButtons.forEach((sw, button) -> {
+            boolean on = sw.get().test(b);
+            button.setMessage(Component.translatable("editor.velvet.talk." + sw.key()).append(": ")
+                    .append(Component.translatable(on ? "options.on" : "options.off")
+                            .withStyle(on ? ChatFormatting.DARK_GREEN : ChatFormatting.DARK_RED)));
+            button.active = !sw.needsTalk() || b.talk;
+        });
+    }
+
     private int modelListTop() {
         int py = y + 12 + 4 * 10 + 4;
         if (page.needsKey || page == AiProvider.CUSTOM) py += 20;
@@ -248,6 +317,7 @@ public final class AiTab implements EditorTab {
     private void applyVisibility() {
         pageWidgets.forEach((provider, widgets) -> widgets.forEach(wd -> wd.visible = part == Part.BRAIN && provider == page));
         promptWidgets.forEach(wd -> wd.visible = part == Part.PROMPT);
+        talkWidgets.forEach(wd -> wd.visible = part == Part.TALK);
     }
 
     @Override
@@ -295,7 +365,7 @@ public final class AiTab implements EditorTab {
     }
 
     private int partW() {
-        return Math.min(110, (w - 2) / 2);
+        return Math.min(110, (w - 2 * (Part.values().length - 1)) / Part.values().length);
     }
 
     @Override
@@ -343,6 +413,18 @@ public final class AiTab implements EditorTab {
             g.drawString(font, Component.translatable("editor.velvet.persona"), x, y + 1, LABEL, false);
             int hy = y + h - 22;
             for (var line : font.split(Component.translatable("editor.velvet.persona.help"), w)) {
+                g.drawString(font, line, x, hy, MUTED, false);
+                hy += 10;
+            }
+            return;
+        }
+        if (part == Part.TALK) {
+            g.drawString(font, Component.translatable("editor.velvet.talk.title"), x, y + 1, LABEL, false);
+            int rows = (SWITCHES.size() + 1) / 2;
+            int hy = y + 32 + rows * 18 + 4;
+            Component help = Component.translatable(behavior().talk ? "editor.velvet.talk.help" : "editor.velvet.talk.silent");
+            for (var line : font.split(help, w)) {
+                if (hy + 9 > y + h) break;
                 g.drawString(font, line, x, hy, MUTED, false);
                 hy += 10;
             }
