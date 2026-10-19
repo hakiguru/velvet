@@ -534,5 +534,17 @@
   "editor.velvet.fit.bone.cock": "Член",
   "editor.velvet.fit.reset": "Сбросить",
   "editor.velvet.fit.save": "Сохранить",
-  "editor.velvet.fit.save.tip": "Подгонка общая для пресета, а не для этой NPC: хранится в config/velvet/scene_fits.json (сохраняется и при выходе из раздела)."
+  "editor.velvet.fit.save.tip": "Подгонка общая для пресета, а не для этой NPC: хранится в config/velvet/scene_fits.json (сохраняется и при выходе из раздела).",
+  "effect.velvet.growth": "Увеличение",
+  "effect.velvet.shrink": "Уменьшение",
+  "item.minecraft.potion.effect.growth": "Зелье увеличения",
+  "item.minecraft.splash_potion.effect.growth": "Взрывное зелье увеличения",
+  "item.minecraft.lingering_potion.effect.growth": "Оседающее зелье увеличения",
+  "item.minecraft.tipped_arrow.effect.growth": "Стрела увеличения",
+  "item.minecraft.potion.effect.shrink": "Зелье уменьшения",
+  "item.minecraft.splash_potion.effect.shrink": "Взрывное зелье уменьшения",
+  "item.minecraft.lingering_potion.effect.shrink": "Оседающее зелье уменьшения",
+  "item.minecraft.tipped_arrow.effect.shrink": "Стрела уменьшения",
+  "skill.velvet.intelligence": "Интеллект",
+  "skill.velvet.intelligence.desc": "Насколько хорошо она соображает: реакция, чат, осмысленные действия. На 0 уровне справляется только с базой; блок щитом, уход от криперов и быстрое выбирание из ловушек приходят с уровнями."
 }

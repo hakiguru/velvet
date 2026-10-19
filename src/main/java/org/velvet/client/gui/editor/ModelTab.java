@@ -943,6 +943,7 @@ public final class ModelTab implements EditorTab {
             pressX = mx;
             pressY = my;
             dragAxis = button == 0 ? handleAt(mx, my) : -1;
+            ringAngle = Double.NaN;
             return true;
         }
         return false;
@@ -958,7 +959,8 @@ public final class ModelTab implements EditorTab {
         if (dragButton < 0 || button != dragButton) return false;
         if (Math.abs(mx - pressX) + Math.abs(my - pressY) > 3) dragged = true;
         if (dragAxis >= 0 && selected != null) {
-            dragHandle(dragAxis, dx, dy);
+            if (tool == Tool.ROTATE) dragRing(dragAxis, mx, my);
+            else dragHandle(dragAxis, dx, dy);
         } else if (button == 0) {
             yaw += (float) dx * 0.8F;
             pitch = Mth.clamp(pitch + (float) dy * 0.8F, -89, 89);
@@ -1078,11 +1080,52 @@ public final class ModelTab implements EditorTab {
     private int handleAt(double mx, double my) {
         Handle[] hs = handles();
         if (hs == null) return -1;
+        if (tool == Tool.ROTATE) {
+            float[][] rings = rings();
+            if (rings == null) return -1;
+            int best = -1;
+            double bestD = HANDLE_SIZE;
+            for (int i = 0; i < 3; i++) {
+                float[] r = rings[i];
+                for (int k = 0; k + 3 < r.length; k += 2) {
+                    double d = segmentDistance(mx, my, r[k], r[k + 1], r[k + 2], r[k + 3]);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = i;
+                    }
+                }
+            }
+            return best;
+        }
         for (int i = 2; i >= 0; i--) {
             Handle hd = hs[i];
             if (hd != null && Math.abs(mx - hd.x1()) <= HANDLE_SIZE && Math.abs(my - hd.y1()) <= HANDLE_SIZE) return i;
         }
         return -1;
+    }
+
+    private static double segmentDistance(double px, double py, float x0, float y0, float x1, float y1) {
+        double dx = x1 - x0, dy = y1 - y0;
+        double len = dx * dx + dy * dy;
+        double t = len < 1.0E-6 ? 0 : Mth.clamp(((px - x0) * dx + (py - y0) * dy) / len, 0, 1);
+        double cx = x0 + t * dx - px, cy = y0 + t * dy - py;
+        return Math.sqrt(cx * cx + cy * cy);
+    }
+
+    /** Turning on a ring: by how far the mouse went round the pivot. */
+    private void dragRing(int axis, double mx, double my) {
+        ModelPicker.Pivot p = picker.pivot(selected);
+        if (p == null) return;
+        double angle = Math.atan2(my - p.y(), mx - p.x());
+        if (!Double.isNaN(ringAngle)) {
+            double delta = angle - ringAngle;
+            if (delta > Math.PI) delta -= Math.PI * 2;
+            if (delta < -Math.PI) delta += Math.PI * 2;
+            float degrees = (float) Math.toDegrees(delta) * ringSense(axis);
+            setValue(2, axis, Mth.wrapDegrees(value(2, axis) + degrees), "handle" + axis);
+            for (RangeSlider s : sliders) s.sync();
+        }
+        ringAngle = angle;
     }
 
     private void dragHandle(int axis, double dx, double dy) {
@@ -1164,24 +1207,48 @@ public final class ModelTab implements EditorTab {
         }
     }
 
+    /**
+     * The gizmo, as in Blockbench: arrows to move along an axis, rings around each axis to turn, lines with a
+     * cube at the end to scale. The one under the mouse (or being dragged) is lit.
+     */
     private void renderHandles(GuiGraphics g, int mouseX, int mouseY) {
         Handle[] hs = handles();
         if (hs == null) return;
         int hovered = dragAxis >= 0 ? dragAxis : handleAt(mouseX, mouseY);
         g.pose().pushPose();
         g.pose().translate(0, 0, 900);
-        for (int i = 0; i < 3; i++) {
-            Handle hd = hs[i];
-            if (hd == null) continue;
-            int colour = i == hovered ? 0xFFFFFF60 : AXIS_COLOURS[i];
-            ModelView.screenLine(g, hd.x0(), hd.y0(), hd.x1(), hd.y1(), i == hovered ? 2.5F : 1.6F, colour);
-            int cx = Math.round(hd.x1()), cy = Math.round(hd.y1());
-            int r = HANDLE_SIZE / 2;
-            if (tool == Tool.ROTATE) {
-                g.fill(cx - r, cy - r, cx + r, cy + r, 0xFF000000);
-                g.fill(cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1, colour);
-            } else {
-                g.fill(cx - r, cy - r, cx + r, cy + r, colour);
+        if (tool == Tool.ROTATE) {
+            float[][] rings = rings();
+            for (int i = 0; i < 3; i++) {
+                if (rings == null || rings[i] == null) continue;
+                int colour = i == hovered ? 0xFFFFFF60 : AXIS_COLOURS[i];
+                float[] r = rings[i];
+                for (int k = 0; k + 3 < r.length; k += 2) {
+                    ModelView.screenLine(g, r[k], r[k + 1], r[k + 2], r[k + 3], i == hovered ? 2.5F : 1.6F, colour);
+                }
+            }
+        } else {
+            for (int i = 0; i < 3; i++) {
+                Handle hd = hs[i];
+                if (hd == null) continue;
+                int colour = i == hovered ? 0xFFFFFF60 : AXIS_COLOURS[i];
+                float dx = hd.x1() - hd.x0(), dy = hd.y1() - hd.y0();
+                float len = Mth.sqrt(dx * dx + dy * dy);
+                float ux = dx / len, uy = dy / len;
+                float r = HANDLE_SIZE / 2.0F;
+                if (tool == Tool.MOVE) {
+                    // the shaft up to the arrowhead, then the head pointing along the axis
+                    float bx = hd.x1() - ux * r * 2.2F, by = hd.y1() - uy * r * 2.2F;
+                    ModelView.screenLine(g, hd.x0(), hd.y0(), bx, by, i == hovered ? 2.5F : 1.6F, colour);
+                    float tx = hd.x1() + ux * r, ty = hd.y1() + uy * r;
+                    ModelView.screenTriangle(g, tx, ty, bx - uy * r * 1.3F, by + ux * r * 1.3F, bx + uy * r * 1.3F, by - ux * r * 1.3F, colour);
+                } else {
+                    ModelView.screenLine(g, hd.x0(), hd.y0(), hd.x1(), hd.y1(), i == hovered ? 2.5F : 1.6F, colour);
+                    int cx = Math.round(hd.x1()), cy = Math.round(hd.y1());
+                    int half = Math.round(r);
+                    g.fill(cx - half - 1, cy - half - 1, cx + half + 1, cy + half + 1, 0xFF000000);
+                    g.fill(cx - half, cy - half, cx + half, cy + half, colour);
+                }
             }
         }
         for (Handle hd : hs) {
@@ -1194,6 +1261,49 @@ public final class ModelTab implements EditorTab {
         g.flush();
         g.pose().popPose();
     }
+
+    private static final int RING_SEGMENTS = 48;
+
+    /**
+     * The rotation rings on screen: for each axis, the circle in the plane of the other two around the pivot,
+     * as x, y pairs; null for an axis whose plane is seen edge-on... never (an edge-on ring is a line, still
+     * grabbable), but null for all while no bone is picked.
+     */
+    @Nullable
+    private float[][] rings() {
+        if (selected == null) return null;
+        ModelPicker.Pivot p = picker.pivot(selected);
+        if (p == null) return null;
+        float max = 0;
+        for (int i = 0; i < 3; i++) max = Math.max(max, Mth.sqrt(p.axisX()[i] * p.axisX()[i] + p.axisY()[i] * p.axisY()[i]));
+        if (max < 0.05F) return null;
+        float s = HANDLE_LENGTH / max;
+        float[][] out = new float[3][];
+        for (int i = 0; i < 3; i++) {
+            int j = (i + 1) % 3, k = (i + 2) % 3;
+            float[] r = new float[(RING_SEGMENTS + 1) * 2];
+            for (int n = 0; n <= RING_SEGMENTS; n++) {
+                double t = n * Math.PI * 2 / RING_SEGMENTS;
+                float c = (float) Math.cos(t), sn = (float) Math.sin(t);
+                r[n * 2] = p.x() + s * (c * p.axisX()[j] + sn * p.axisX()[k]);
+                r[n * 2 + 1] = p.y() + s * (c * p.axisY()[j] + sn * p.axisY()[k]);
+            }
+            out[i] = r;
+        }
+        return out;
+    }
+
+    /** Which way round a ring turns on screen for a positive turn of its axis: the sign of its two axes' cross. */
+    private int ringSense(int axis) {
+        ModelPicker.Pivot p = picker.pivot(selected);
+        if (p == null) return 1;
+        int j = (axis + 1) % 3, k = (axis + 2) % 3;
+        float cross = p.axisX()[j] * p.axisY()[k] - p.axisY()[j] * p.axisX()[k];
+        return cross >= 0 ? 1 : -1;
+    }
+
+    /** The mouse's angle around the pivot when the last ring drag step was taken. */
+    private double ringAngle = Double.NaN;
 
     private int poseRows() {
         int[] p = poseList();

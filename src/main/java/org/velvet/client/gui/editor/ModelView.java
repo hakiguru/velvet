@@ -113,4 +113,18 @@ public final class ModelView {
         vc.addVertex(m, x0 - nx, y0 - ny, 0).setColor(colour);
         vc.addVertex(m, x0 + nx, y0 + ny, 0).setColor(colour);
     }
+
+    /** A filled screen-space triangle (both windings, whichever way the faces are culled). */
+    public static void screenTriangle(GuiGraphics g, float ax, float ay, float bx, float by, float cx, float cy, int colour) {
+        var m = g.pose().last().pose();
+        VertexConsumer vc = g.bufferSource().getBuffer(RenderType.gui());
+        vc.addVertex(m, ax, ay, 0).setColor(colour);
+        vc.addVertex(m, bx, by, 0).setColor(colour);
+        vc.addVertex(m, cx, cy, 0).setColor(colour);
+        vc.addVertex(m, cx, cy, 0).setColor(colour);
+        vc.addVertex(m, cx, cy, 0).setColor(colour);
+        vc.addVertex(m, bx, by, 0).setColor(colour);
+        vc.addVertex(m, ax, ay, 0).setColor(colour);
+        vc.addVertex(m, ax, ay, 0).setColor(colour);
+    }
 }

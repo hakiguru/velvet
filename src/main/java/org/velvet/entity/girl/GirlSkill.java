@@ -11,7 +11,11 @@ package org.velvet.entity.girl;
  *   <li>LUST: finished scenes.</li>
  *   <li>CAPACITY: finished scenes. Her inventory: 1 slot at level 0, up to 27 at level 10. Later also how
  *       many players a group scene takes and which toys she can use.</li>
- *   <li>AGILITY: distance walked; +3% movement speed per level.</li>
+ *   <li>AGILITY: distance walked; +3% movement speed per level, and how quickly she carries things out (jumps,
+ *       building, mining).</li>
+ *   <li>INTELLIGENCE: how well she decides what to do: her reactions, the sense of her chat and actions.
+ *       At level 0 she only manages the basics (swimming, following); the reactive combat (blocking, backing
+ *       off creepers in time, getting unstuck quickly) comes with the levels.</li>
  *   <li>WEAPONS: hits she lands on monsters (critical ones count double); she shoots straighter with it.</li>
  *   <li>BUILDING: blocks she places (pillars, shelters, steps).</li>
  *   <li>TOOLS: blocks she mines, ores the most.</li>
@@ -26,7 +30,8 @@ public enum GirlSkill {
     BUILDING(0xFF9C7A54, true),
     WEAPONS(0xFF9AA4B4, true),
     TOOLS(0xFF4C8CA8, true),
-    AGILITY(0xFF48A8E0, true);
+    AGILITY(0xFF48A8E0, true),
+    INTELLIGENCE(0xFF7ED957, true);
 
     public static final int MAX_LEVEL = 10;
 

@@ -32,6 +32,11 @@ public enum GirlAction {
     /** Sits down on the edge of the bed, her back to it. */
     EDGE_SIT("ellie", "sitdown", Play.ONCE, 110, null, Partner.NEARBY),
     EDGE_WAIT("ellie", "sitdownidle", Play.LOOP, 0, null, Partner.NEARBY),
+    /**
+     * After a scene: she gets up (her pose eases back into standing while she steps off the bed) and the
+     * partner is carried to where he gets off; no animation of its own.
+     */
+    GET_UP(null, null, Play.ONCE, 16, "NULL", Partner.NONE),
     /** Waits standing next to the bed (the partner sits down on its edge). */
     STAND_WAIT(null, "idle", Play.LOOP, 0, null, Partner.NEARBY),
 

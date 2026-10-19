@@ -646,7 +646,7 @@ public final class AnimationTab implements EditorTab {
         if (!type.isCustom()) {
             int ty = y + 10;
             for (var line : font.split(Component.translatable("editor.velvet.built_in_preset", type.displayName()), w)) {
-                g.drawCenteredString(font, line, x + w / 2, ty, LABEL);
+                drawCentered(g, font, line, x + w / 2, ty, LABEL);
                 ty += 10;
             }
             return;
@@ -719,7 +719,9 @@ public final class AnimationTab implements EditorTab {
         }
         int px = xOf(playhead);
         g.fill(px, t[1], px + 1, t[3], 0xFFFFE080);
-        g.drawString(font, String.format(Locale.ROOT, "%.2fs", playhead), Math.min(px + 3, t[2] - 30), t[3] - 10, 0xFFFFE080, false);
+        // the time at the right end of the ruler, clear of the tracks
+        String now = String.format(Locale.ROOT, "%.2fs", playhead);
+        g.drawString(font, now, t[2] - 2 - font.width(now), t[1] + 1, 0xFFFFE080, false);
 
         // her bones
         int[] b = boneBox();

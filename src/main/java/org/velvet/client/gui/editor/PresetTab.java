@@ -293,7 +293,7 @@ public final class PresetTab implements EditorTab {
     private void renderNewCard(GuiGraphics g, int cx, int cy, int cw, int ch, boolean hover) {
         drawInset(g, cx, cy, cw, ch, hover ? 0xFF8FC48F : 0xFF7DAE7D);
         g.drawCenteredString(font, "+", cx + cw / 2, cy + ch / 2 - 10, 0xFFFFFFFF);
-        g.drawCenteredString(font, font.plainSubstrByWidth(Component.translatable("editor.velvet.preset.new").getString(), cw - 4),
+        drawCentered(g, font, font.plainSubstrByWidth(Component.translatable("editor.velvet.preset.new").getString(), cw - 4),
                 cx + cw / 2, cy + ch / 2 + 2, 0xFF1E3A1E);
     }
 }

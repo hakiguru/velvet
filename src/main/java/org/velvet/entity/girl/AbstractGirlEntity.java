@@ -293,6 +293,8 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
         // what to do about danger is up to her survival brain; these carry it out
         // out of lava (or water she's stuck in) before anything else, swimming included
         this.goalSelector.addGoal(0, new org.velvet.entity.girl.ai.GirlEscapeFluidGoal(this));
+        // swimming after the owner underwater takes priority over just bobbing at the surface
+        this.goalSelector.addGoal(0, new org.velvet.entity.girl.ai.GirlSwimGoal(this));
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(1, new GirlDigInGoal(this));
         this.goalSelector.addGoal(1, new GirlPillarGoal(this));
@@ -1157,7 +1159,7 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
                 this, "movement", 5, org.velvet.client.animation.GirlAnimationController::movementPredicate)
                 .setSoundKeyframeHandler(org.velvet.client.animation.GirlAnimationController::ignoreKeyframe));
         controllers.add(new org.velvet.client.animation.ScrubAnimationController(
-                this, "action", 2, org.velvet.client.animation.GirlAnimationController::actionPredicate)
+                this, "action", 5, org.velvet.client.animation.GirlAnimationController::actionPredicate)
                 .setSoundKeyframeHandler(org.velvet.client.animation.GirlAnimationController::onSoundKeyframe));
         controllers.add(new AnimationController<>(
                 this, "emote", 8, org.velvet.client.animation.GirlAnimationController::emotePredicate));
@@ -1166,6 +1168,12 @@ public abstract class AbstractGirlEntity extends PathfinderMob implements GeoAni
     @Override
     public @NotNull AnimatableInstanceCache getAnimatableInstanceCache() {
         return this.animationCache;
+    }
+
+    /** Bones nothing animates ease back into place: slowly while she gets up after a scene, quickly otherwise. */
+    @Override
+    public double getBoneResetTime() {
+        return getCurrentAction() == GirlAction.GET_UP ? GirlAction.GET_UP.length : 3;
     }
 
     @Override

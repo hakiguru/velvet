@@ -452,7 +452,7 @@ public final class TextureTab implements EditorTab {
         if (!type.isCustom()) {
             int ty = y + 10;
             for (var line : font.split(Component.translatable("editor.velvet.built_in_preset", type.displayName()), w)) {
-                g.drawCenteredString(font, line, x + w / 2, ty, LABEL);
+                drawCentered(g, font, line, x + w / 2, ty, LABEL);
                 ty += 10;
             }
             return;

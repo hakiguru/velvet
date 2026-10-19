@@ -39,6 +39,16 @@ public final class PanelArt {
     }
 
     /** Sunken box: dark top-left edge, light bottom-right edge. */
+    /** Centred text without the shadow GuiGraphics.drawCenteredString always adds (dark text gets muddy with one). */
+    public static void drawCentered(GuiGraphics g, net.minecraft.client.gui.Font font, String text, int cx, int y, int colour) {
+        g.drawString(font, text, cx - font.width(text) / 2, y, colour, false);
+    }
+
+    public static void drawCentered(GuiGraphics g, net.minecraft.client.gui.Font font, net.minecraft.util.FormattedCharSequence text,
+                                    int cx, int y, int colour) {
+        g.drawString(font, text, cx - font.width(text) / 2, y, colour, false);
+    }
+
     public static void drawInset(GuiGraphics g, int x, int y, int w, int h, int fill) {
         g.fill(x, y, x + w, y + h, fill);
         g.fill(x - 1, y - 1, x + w, y, DARK);

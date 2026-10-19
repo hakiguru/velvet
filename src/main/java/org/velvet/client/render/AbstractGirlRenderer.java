@@ -262,6 +262,18 @@ public abstract class AbstractGirlRenderer<T extends AbstractGirlEntity>
                           int packedOverlay, int colour) {
         super.preRender(poseStack, girl, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, colour);
         model.getBone(HEAD_BONE).ifPresent(b -> b.setTrackingMatrices(true));
+        // lay her flat while swimming, the way a player tips forward; eased by the vanilla swim amount
+        if (!isReRender && !girl.getCurrentAction().isBusy() && girl.clientPreviewAnimation == null) {
+            float swim = girl.getSwimAmount(partialTick);
+            if (swim > 0) {
+                // tip her flat, head forward, turning about her waist (about a block up); under water her look
+                // pitch tilts her up or down like a player's crawl
+                float pitch = girl.isUnderWater() ? girl.getViewXRot(partialTick) : 0;
+                poseStack.translate(0, 0.9F, 0);
+                poseStack.mulPose(com.mojang.math.Axis.XP.rotationDegrees(swim * (-90.0F + pitch)));
+                poseStack.translate(0, -0.9F, 0);
+            }
+        }
     }
 
     /** A vanilla style name tag at {@code offset} from the entity's render origin. */

@@ -79,8 +79,25 @@ public class Velvet {
 
     // Awkward potion + wheat seeds -> horny potion (the old data/recipe json used a recipe type that doesn't exist)
     private void registerBrewing(net.neoforged.neoforge.event.brewing.RegisterBrewingRecipesEvent event) {
-        event.getBuilder().addMix(net.minecraft.world.item.alchemy.Potions.AWKWARD,
+        var b = event.getBuilder();
+        b.addMix(net.minecraft.world.item.alchemy.Potions.AWKWARD,
                 net.minecraft.world.item.Items.WHEAT_SEEDS, org.velvet.potion.VelvetPotions.HORNY_POTION);
+
+        var awkward = net.minecraft.world.item.alchemy.Potions.AWKWARD;
+        var glowstone = net.minecraft.world.item.Items.GLOWSTONE_DUST;
+        var redstone = net.minecraft.world.item.Items.REDSTONE;
+
+        // growth: a ghast tear starts it, glowstone makes it stronger (×2 → ×4 → ×8), redstone makes it last
+        b.addMix(awkward, net.minecraft.world.item.Items.GHAST_TEAR, org.velvet.potion.VelvetPotions.GROWTH);
+        b.addMix(org.velvet.potion.VelvetPotions.GROWTH, glowstone, org.velvet.potion.VelvetPotions.GROWTH_2);
+        b.addMix(org.velvet.potion.VelvetPotions.GROWTH_2, glowstone, org.velvet.potion.VelvetPotions.GROWTH_3);
+        b.addMix(org.velvet.potion.VelvetPotions.GROWTH, redstone, org.velvet.potion.VelvetPotions.GROWTH_LONG);
+
+        // shrink: a phantom membrane starts it, glowstone shrinks further (1 block → half → ~1.8 px)
+        b.addMix(awkward, net.minecraft.world.item.Items.PHANTOM_MEMBRANE, org.velvet.potion.VelvetPotions.SHRINK);
+        b.addMix(org.velvet.potion.VelvetPotions.SHRINK, glowstone, org.velvet.potion.VelvetPotions.SHRINK_2);
+        b.addMix(org.velvet.potion.VelvetPotions.SHRINK_2, glowstone, org.velvet.potion.VelvetPotions.SHRINK_3);
+        b.addMix(org.velvet.potion.VelvetPotions.SHRINK, redstone, org.velvet.potion.VelvetPotions.SHRINK_LONG);
     }
 
     private void loadComplete(FMLLoadCompleteEvent event) {

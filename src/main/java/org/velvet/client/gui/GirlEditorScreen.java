@@ -314,11 +314,15 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
         SkinCache.setUploadListener(null);
     }
 
+    private int debugButtonW() {
+        return Mth.clamp((panelW - 2 * MARGIN - 2 * 74 - 12) / 3, 40, 70);
+    }
+
     /** Debug: go to her, bring her here, delete her (twice, to be sure). */
     private void addDebugButtons() {
         int by = top + panelH - BOTTOM_BAR + 5, bx = left + MARGIN;
         UUID id = target.id();
-        int bw = Mth.clamp((panelW - 2 * MARGIN - 2 * 74 - 12) / 3, 40, 70);
+        int bw = debugButtonW();
         addRenderableWidget(Button.builder(Component.translatable("editor.velvet.debug.teleport"),
                         b -> NetworkHandler.sendToServer(EditorNpcActionPacket.of(EditorNpcActionPacket.TELEPORT_TO, id)))
                 .bounds(bx, by, bw, 18).tooltip(net.minecraft.client.gui.components.Tooltip.create(
@@ -734,14 +738,16 @@ public class GirlEditorScreen extends Screen implements MenuAccess<GirlEditorMen
             }
         }
 
-        // status in the bottom bar
+        // status in the bottom bar, between the debug buttons (if any) and Save
         int sy = top + panelH - BOTTOM_BAR + 10;
-        if (leaveConfirm != null && state.dirty) {
-            g.drawString(font, Component.translatable("editor.velvet.leave_unsaved"), left + MARGIN, sy, 0xFFB02020, false);
-        } else if (savedTicks > 0) {
-            g.drawString(font, Component.translatable("editor.velvet.saved"), left + MARGIN, sy, 0xFF2E7D32, false);
-        } else if (state.dirty) {
-            g.drawString(font, Component.translatable("editor.velvet.unsaved"), left + MARGIN, sy, MUTED, false);
+        int sx = left + MARGIN + (state.debug && target != null ? 3 * (debugButtonW() + 3) + 2 : 0);
+        int room = left + panelW - MARGIN - 2 * 70 - 8 - sx;
+        Component status = leaveConfirm != null && state.dirty ? Component.translatable("editor.velvet.leave_unsaved")
+                : savedTicks > 0 ? Component.translatable("editor.velvet.saved")
+                : state.dirty ? Component.translatable("editor.velvet.unsaved") : null;
+        if (status != null && room > 12) {
+            int colour = leaveConfirm != null && state.dirty ? 0xFFB02020 : savedTicks > 0 ? 0xFF2E7D32 : MUTED;
+            g.drawString(font, font.plainSubstrByWidth(status.getString(), room), sx, sy, colour, false);
         }
 
         frame.renderGrip(g, mouseX, mouseY);

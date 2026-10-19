@@ -231,7 +231,7 @@ public class GirlFightGoal extends Goal {
         boolean shots = girl.survival().senses().incoming() != null;
         boolean aimedAt = false;
         for (Threats.Threat t : girl.survival().threats().within(24)) aimedAt |= t.aiming && t.visible;
-        boolean want = hasShield() && girl.settings().useShield && !striking && (shots || aimedAt || aboutToStrike);
+        boolean want = hasShield() && girl.settings().useShield && smart(2) && !striking && (shots || aimedAt || aboutToStrike);
         if (want && !blocking) {
             if (!Gear.isShield(girl.getOffhandItem())) Gear.holdShield(girl);
             if (Gear.isShield(girl.getOffhandItem())) {
@@ -255,6 +255,23 @@ public class GirlFightGoal extends Goal {
 
     /** After a hit on a creeper: backing away for this many ticks before going in again. */
     private int creeperRetreat;
+    /** Ticks she's noticed the current creeper swelling; she reacts once it passes her reflex delay. */
+    private int creeperReact;
+
+    /** 0..10: how quick and sure her reactions are. */
+    private int intelligence() {
+        return girl.getSkillLevel(org.velvet.entity.girl.GirlSkill.INTELLIGENCE);
+    }
+
+    /** She does this knowing move only once she's smart enough for it. */
+    private boolean smart(int min) {
+        return intelligence() >= min;
+    }
+
+    /** Ticks before she reacts to something sudden: instant when clever, up to a second when not. */
+    private int reflexDelay() {
+        return (10 - intelligence()) * 2;
+    }
 
     /**
      * Creepers the way players fight them: run in, a sprinting hit (it knocks it back), straight back out
@@ -266,7 +283,12 @@ public class GirlFightGoal extends Goal {
         if (hissing) {
             creeperRetreat = 0;
             girl.lookAt(creeper, 60, 60);
-            if (dist < 3.2 && hasShield() && girl.settings().useShield) {
+            // she takes a moment to react; the slower she is, the longer, so a dim one often doesn't make it
+            if (creeperReact++ < reflexDelay()) {
+                girl.getMoveControl().strafe(0, 0);
+                return;
+            }
+            if (dist < 3.2 && hasShield() && girl.settings().useShield && smart(2)) {
                 // can't get away in time: take it on the shield, facing it
                 girl.getNavigation().stop();
                 if (!Gear.isShield(girl.getOffhandItem())) Gear.holdShield(girl);
@@ -287,6 +309,7 @@ public class GirlFightGoal extends Goal {
             }
             return;
         }
+        creeperReact = 0;
         if (blocking) {
             girl.stopUsingItem();
             blocking = false;

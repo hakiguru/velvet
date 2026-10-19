@@ -58,8 +58,6 @@ public enum SceneType {
             Place.bed(Spot.SIDE, null, GirlAction.STAND_WAIT, 0, 0, 0.53)),
     TOUCH            (GirlType.LUNA,   Items.COOKED_SALMON, 4, GirlAction.TOUCH_INTRO,       false, Place.floor(0.94)),
 
-    GALATH_BED       (GirlType.GALATH, Items.GOLD_INGOT, 4,    GirlAction.GALATH_BED_START,  true,
-            Place.alongBed(Spot.LEFT, GirlAction.EDGE_SIT, GirlAction.EDGE_WAIT, 0.8, 0.3)),
     SOLO_SHOW        (GirlType.GALATH, Items.AMETHYST_SHARD, 4, GirlAction.SOLO_SHOW,        true,  Place.floor(1.5));
 
     /** Where the scene is played; see the class comment. */

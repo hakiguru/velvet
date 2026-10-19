@@ -57,6 +57,12 @@ public final class GirlSceneController {
     /** Where she's held during the attached part of a bed scene. */
     @Nullable private Vec3 pinned;
     @Nullable private SceneType pending;
+    // getting up after a scene: where she and the partner go from and to
+    @Nullable private Vec3 upFrom, upTo, partnerFrom, partnerTo;
+    @Nullable private java.util.UUID upPartner;
+    /** Lying down on the bed: where she stood before, eased from onto her place in it. */
+    @Nullable private Vec3 lieFrom;
+    private static final int LIE_DOWN_TICKS = 14;
     @Nullable private BedFinder.Bed bed;
     private int stageTicks;
     private float sceneYaw;
@@ -136,6 +142,7 @@ public final class GirlSceneController {
         pending = null;
         scene = null;
         pinned = null;
+        lieFrom = null;
         bed = null;
         seated = false;
         fast = false;
@@ -168,6 +175,10 @@ public final class GirlSceneController {
         }
 
         switch (action) {
+            case GET_UP -> {
+                tickGetUp();
+                return;
+            }
             case STRIP -> {
                 if (stageTicks == STRIP_NUDE_TICK) girl.setModelVariant(AbstractGirlEntity.VARIANT_NUDE);
             }
@@ -264,9 +275,62 @@ public final class GirlSceneController {
                 girl.addSkillXp(GirlSkill.CAPACITY, SCENE_CAPACITY_XP);
                 girl.addSkillXp(GirlSkill.ENDURANCE, SCENE_ENDURANCE_XP);
             }
-            stop();
+            if (action.isAttached()) getUp(partner());
+            else stop();
         } else {
             setStage(next);
+        }
+    }
+
+    /**
+     * The end of a scene: instead of both being put down at once, she gets up and steps off the bed to the
+     * spot she came from, and the partner is carried from where he was to where he gets off, both eased.
+     */
+    private void getUp(@Nullable ServerPlayer partner) {
+        upFrom = girl.position();
+        upTo = bed != null ? Vec3.atBottomCenterOf(bed.spot()) : upFrom;
+        upPartner = null;
+        if (partner != null && partner.getVehicle() == girl) {
+            partnerFrom = partner.position();
+            partnerTo = dismountPosition(girl, partner);
+            upPartner = partner.getUUID();
+            // off her without vanilla's dismount jump; he's moved along below
+            partner.removeVehicle();
+        }
+        girl.ejectPassengers();
+        pending = null;
+        scene = null;
+        pinned = null;
+        bed = null;
+        seated = false;
+        fast = false;
+        setProgress(0);
+        girl.setPartnerUUID(null);
+        setStage(GirlAction.GET_UP);
+    }
+
+    private void tickGetUp() {
+        GirlAction action = GirlAction.GET_UP;
+        float t = Math.min(1, stageTicks / (float) action.length);
+        float eased = t * t * (3 - 2 * t);
+        if (upFrom != null && upTo != null) {
+            Vec3 at = upFrom.lerp(upTo, eased);
+            girl.setDeltaMovement(Vec3.ZERO);
+            girl.setPos(at);
+        }
+        girl.setYRot(sceneYaw);
+        girl.setYBodyRot(sceneYaw);
+        if (upPartner != null && partnerFrom != null && partnerTo != null
+                && girl.level() instanceof ServerLevel level && level.getPlayerByUUID(upPartner) instanceof ServerPlayer p) {
+            Vec3 at = partnerFrom.lerp(partnerTo, eased);
+            p.teleportTo(level, at.x, at.y, at.z, java.util.Set.of(net.minecraft.world.entity.RelativeMovement.X_ROT,
+                    net.minecraft.world.entity.RelativeMovement.Y_ROT), 0, 0);
+            p.fallDistance = 0;
+        }
+        if (stageTicks >= action.length) {
+            upFrom = upTo = partnerFrom = partnerTo = null;
+            upPartner = null;
+            setStage(GirlAction.NULL);
         }
     }
 
@@ -294,7 +358,8 @@ public final class GirlSceneController {
                 Vec3 toBed = Vec3.atLowerCornerOf(bed.toBed().getNormal());
                 sceneYaw = bed.toBed().getOpposite().toYRot();
                 pinned = Vec3.atBottomCenterOf(spot).add(toBed.scale(place.forward())).add(0, place.up(), 0);
-                girl.moveTo(pinned.x, pinned.y, pinned.z, sceneYaw, 0);
+                lieFrom = Vec3.atBottomCenterOf(spot);
+                girl.moveTo(lieFrom.x, lieFrom.y, lieFrom.z, sceneYaw, 0);
             } else {
                 // stand on the spot facing the bed; the animation itself climbs onto it
                 sceneYaw = bed.toBed().toYRot();
@@ -380,7 +445,14 @@ public final class GirlSceneController {
         // on the bed for the attached part, or lying in it already while she waits
         if (pinned != null && (role == GirlAction.Bed.ON || role == GirlAction.Bed.WAIT)) {
             girl.setDeltaMovement(Vec3.ZERO);
-            if (girl.position().distanceToSqr(pinned) > 1.0E-4) girl.setPos(pinned);
+            Vec3 target = pinned;
+            if (lieFrom != null && role == GirlAction.Bed.WAIT && stageTicks < LIE_DOWN_TICKS) {
+                float t = stageTicks / (float) LIE_DOWN_TICKS;
+                target = lieFrom.lerp(pinned, t * t * (3 - 2 * t));
+            } else {
+                lieFrom = null;
+            }
+            if (girl.position().distanceToSqr(target) > 1.0E-4) girl.setPos(target);
         } else {
             girl.setDeltaMovement(0, girl.getDeltaMovement().y, 0);
         }
@@ -397,8 +469,8 @@ public final class GirlSceneController {
         freeze();
         if (partner.getVehicle() != girl) {
             if (seated) {
-                // sneaking dismounts a passenger: that's how the partner leaves the scene
-                stop();
+                // sneaking dismounts a passenger: that's how the partner leaves the scene (she gets up)
+                getUp(null);
                 return false;
             }
             partner.stopRiding();

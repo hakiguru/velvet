@@ -162,6 +162,8 @@ public class GirlFollowGoal extends Goal {
      * ground in the way if it's natural and safe to take. False if neither helps.
      */
     private boolean unstick() {
+        // getting yourself out of a jam is a clever move: a dim one just jumps at the wall and stays stuck
+        if (girl.getSkillLevel(org.velvet.entity.girl.GirlSkill.INTELLIGENCE) < 3) return false;
         if (!girl.onGround() || !org.velvet.entity.girl.mind.BlockWork.mayGrief(girl)) return false;
         BlockPos at = girl.blockPosition();
         var level = girl.level();

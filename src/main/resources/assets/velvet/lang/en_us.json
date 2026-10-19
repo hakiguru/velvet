@@ -534,5 +534,17 @@
   "editor.velvet.fit.bone.cock": "Cock",
   "editor.velvet.fit.reset": "Reset",
   "editor.velvet.fit.save": "Save",
-  "editor.velvet.fit.save.tip": "Fits are for the preset, not this NPC: kept in config/velvet/scene_fits.json (also saved when you leave this section)."
+  "editor.velvet.fit.save.tip": "Fits are for the preset, not this NPC: kept in config/velvet/scene_fits.json (also saved when you leave this section).",
+  "effect.velvet.growth": "Growth",
+  "effect.velvet.shrink": "Shrink",
+  "item.minecraft.potion.effect.growth": "Potion of Growth",
+  "item.minecraft.splash_potion.effect.growth": "Splash Potion of Growth",
+  "item.minecraft.lingering_potion.effect.growth": "Lingering Potion of Growth",
+  "item.minecraft.tipped_arrow.effect.growth": "Arrow of Growth",
+  "item.minecraft.potion.effect.shrink": "Potion of Shrinking",
+  "item.minecraft.splash_potion.effect.shrink": "Splash Potion of Shrinking",
+  "item.minecraft.lingering_potion.effect.shrink": "Lingering Potion of Shrinking",
+  "item.minecraft.tipped_arrow.effect.shrink": "Arrow of Shrinking",
+  "skill.velvet.intelligence": "Intelligence",
+  "skill.velvet.intelligence.desc": "How well she decides what to do: reactions, chat, sensible actions. At level 0 she manages only the basics; blocking, dodging creepers and getting unstuck quickly come with the levels."
 }

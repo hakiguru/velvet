@@ -24,11 +24,6 @@
       "offset": [0.0, -3.68, 0.0]
     }
   },
-  "ellie|galath_bed": {
-    "body": {
-      "offset": [-0.32, -2.4, -0.16]
-    }
-  },
   "ellie|prone_doggy": {
     "body": {
       "offset": [0.0, 0.32, 6.24]
@@ -47,11 +42,6 @@
   "jenny|cowgirl": {
     "body": {
       "offset": [0.0, 3.68, 0.0]
-    }
-  },
-  "jenny|galath_bed": {
-    "body": {
-      "offset": [-0.32, 1.28, -0.16]
     }
   },
   "jenny|missionary": {
